@@ -294,3 +294,6 @@ docs/IDENTITY_OPERATOR_RUNBOOK.md
 /coverage/
 /test-results/
 /playwright-report/
+
+# Private provider discovery evidence (not customer acceptance)
+/var/provider-readiness.json

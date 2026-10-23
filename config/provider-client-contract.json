@@ -1,0 +1,10 @@
+{
+  "schema": "identity.provider.clients.v1",
+  "description": "A public generic example. No real client IDs or issuer URLs.",
+  "brands": [
+    {"id":"aurora","sectorKey":"aurora-sector","clients":[{"key":"AURORA_WEB","kind":"web"},{"key":"AURORA_MOBILE","kind":"mobile-browser-preview"}]},
+    {"id":"brisa","sectorKey":"brisa-sector","clients":[{"key":"BRISA_WEB","kind":"web"},{"key":"BRISA_MOBILE","kind":"mobile-browser-preview"}]}
+  ],
+  "runtimeState":"NOT_CONFIGURED",
+  "liveProofRequired":["pairwise subject","OIDC discovery","signature","issuer","audience","cross-domain SSO","consent isolation"]
+}

@@ -9,7 +9,7 @@ case "$cmd" in
     export EXPERIENCE_PREVIEW_ACK=YES_LOCAL_SYNTHETIC_ONLY
     node services/experience-api/server.mjs & api_pid=$!
     trap 'kill "$api_pid" 2>/dev/null || true' EXIT INT TERM
-    npm --prefix apps/experience-center run dev -- --host 127.0.0.1
+    (cd apps/experience-center && npm exec -- vite --config identity.dev.vite.config.ts --host 127.0.0.1 --port 5173 --strictPort)
     ;;
   serve)
     export EXPERIENCE_PREVIEW_ACK=YES_LOCAL_SYNTHETIC_ONLY
@@ -18,10 +18,19 @@ case "$cmd" in
   build)
     npm --prefix apps/experience-center run build
     (cd apps/experience-center && npm exec -- vite build --config retail.vite.config.ts)
+    (cd apps/experience-center && npm exec -- vite build --config mobile.vite.config.ts)
+    (cd apps/experience-center && npm exec -- vite build --config operations.vite.config.ts)
+    (cd apps/experience-center && npm exec -- vite build --config provider.vite.config.ts)
     ;;
   test)
     node --test services/experience-api/test/*.test.mjs
     npm test
+    ;;
+  operations-test)
+    node --test services/experience-api/test/*.test.mjs scripts/operations/*.test.mjs
+    ;;
+  mobile-test)
+    node --test services/experience-api/test/*.test.mjs scripts/mobile/*.test.mjs
     ;;
   preview-test)
     node --test services/experience-api/test/*.test.mjs
@@ -32,15 +41,18 @@ case "$cmd" in
     ;;
   help|*)
     cat <<'HELP'
-Identity Experience v0.4
+Identity Experience v0.6.2
   ./experience.sh dev           local API + React Vite development server
-  ./experience.sh build         Experience Center + two complete branded websites
+  ./experience.sh build         Experience Center + two branded websites + two mobile application previews
   ./experience.sh serve         locally serve built UI and API
+  ./experience.sh operations-test  B2B/onboarding/authorization/evidence tests
+  ./experience.sh mobile-test  retail and mobile domain/contract tests
   ./experience.sh preview-test  SQLite/consent/assurance/retail/API contract tests
   ./experience.sh test          preview tests and existing repository npm test
   ./experience.sh check         preview tests and staged publication check
 
 Preview is synthetic, loopback-only, NOT a real identity provider.
+  ./provider.sh status/test/verify  WSO2 adapter readiness and contract checks.
 HELP
     ;;
 esac

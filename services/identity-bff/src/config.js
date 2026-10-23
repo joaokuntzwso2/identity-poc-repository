@@ -1,11 +1,11 @@
 /** Four independent client registrations. Values must be supplied by a real WSO2 deployment. */
 export const brands = Object.freeze({
-  aurora: {name: 'Aurora', color: '#EF6B53', sectorKey: 'aurora'},
-  brisa: {name: 'Brisa', color: '#5B6EEA', sectorKey: 'brisa'},
+  aurora: { name: 'Aurora', color: '#EF6B53', sectorKey: 'aurora' },
+  brisa: { name: 'Brisa', color: '#5B6EEA', sectorKey: 'brisa' },
 });
 
 export const clients = Object.freeze(Object.fromEntries(
-  Object.keys(brands).flatMap(brand => ['web','app'].map(channel => {
+  Object.keys(brands).flatMap(brand => ['web', 'app'].map(channel => {
     const name = `${brand}-${channel}`;
     const envKey = name.toUpperCase().replace(/-/g, '_');
     return [name, {

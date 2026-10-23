@@ -1,15 +1,159 @@
 [
-  {"id":"M-02.1","name":"Identificador pairwise por marca","description":"Quatro OIDC clients, mesmo usuário, isolamento setorial","area":"Identidade multimarca","status":"IMPLEMENTED_NEEDS_WSO2","priority":1,"requirements":["B-01","B-02","B-03","B-09"]},
-  {"id":"M-02.2","name":"Minimização de atributos","description":"Comparação criptográfica de ID Tokens; testes de UserInfo pendentes","area":"Privacidade e LGPD","status":"PARTIAL","priority":2,"requirements":["B-09","D-10"]},
-  {"id":"M-02.3","name":"Step-up adaptativo ACR","description":"Requer configuração do autenticador WSO2 e teste de MFA real","area":"Autenticação avançada","status":"PARTIAL","priority":3,"requirements":["C-03","F-05"]},
-  {"id":"M-02.4","name":"Consentimento isolado","description":"Extensão local efêmera com rejeição por padrão e cadeia de auditoria","area":"Privacidade e LGPD","status":"PROTOTYPE","priority":4,"requirements":["D-01","D-07"]},
-  {"id":"M-02.5","name":"Token Exchange RFC 8693","description":"Aguardando adapter actor_token, WSO2 update >=7.3.0.18","area":"Workloads e agentes","status":"PENDING","priority":5,"requirements":["A-05","G-08"]},
-  {"id":"M-02.6","name":"Repositórios simultâneos","description":"Reutilizar OpenLDAP e credenciais primárias do repositório base","area":"Migração e integrações","status":"UPSTREAM_REQUIRED","priority":6,"requirements":["H-09"]},
-  {"id":"M-02.7","name":"Onboarding terceiro tenant","description":"Reutilizar bootstrap API e implementar diff e verificação de continuidade","area":"Multitenancy e B2B","status":"UPSTREAM_REQUIRED","priority":7,"requirements":["B-03","H-11"]},
-  {"id":"UC-01","name":"Experiência pessoa física","description":"Quatro jornadas web/mobile-style e perfil mínimo","area":"B2C","status":"PARTIAL","priority":8,"requirements":["F-01","F-02"]},
-  {"id":"UC-02","name":"Portal sellers B2B","description":"Hierarquia e administração delegada do projeto original","area":"B2B","status":"UPSTREAM_REQUIRED","priority":9,"requirements":["B-13","B-14"]},
-  {"id":"UC-03","name":"Machine-to-machine","description":"Client Credentials via token endpoint real; token nunca sai do BFF","area":"Workloads e agentes","status":"IMPLEMENTED_NEEDS_WSO2","priority":10,"requirements":["A-07","G-01"]},
-  {"id":"UC-04","name":"Loja, PDV e central","description":"Device Authorization e CIBA em integração futura","area":"Multicanal","status":"PENDING","priority":11,"requirements":["E-01","E-02"]},
-  {"id":"DIFF-AI","name":"AI Agent + MCP humano no loop","description":"Preservar agente nativo e fallback explicitamente separados","area":"Workloads e agentes","status":"UPSTREAM_REQUIRED","priority":12,"requirements":["G-09","G-10"]},
-  {"id":"MIG-01","name":"Migração de Doorkeeper","description":"Credenciais e ID mapping com rollback e dados sintéticos","area":"Migração e integrações","status":"PENDING","priority":13,"requirements":["H-01","H-02"]}
+  {
+    "id": "M-02.1",
+    "name": "Identificador pairwise por marca",
+    "description": "Quatro OIDC clients, mesmo usuário, isolamento setorial",
+    "area": "Identidade multimarca",
+    "status": "IMPLEMENTED_NEEDS_WSO2",
+    "priority": 1,
+    "requirements": [
+      "B-01",
+      "B-02",
+      "B-03",
+      "B-09"
+    ]
+  },
+  {
+    "id": "M-02.2",
+    "name": "Minimização de atributos",
+    "description": "Comparação criptográfica de ID Tokens; testes de UserInfo pendentes",
+    "area": "Privacidade e LGPD",
+    "status": "PARTIAL",
+    "priority": 2,
+    "requirements": [
+      "B-09",
+      "D-10"
+    ]
+  },
+  {
+    "id": "M-02.3",
+    "name": "Step-up adaptativo ACR",
+    "description": "Requer configuração do autenticador WSO2 e teste de MFA real",
+    "area": "Autenticação avançada",
+    "status": "PARTIAL",
+    "priority": 3,
+    "requirements": [
+      "C-03",
+      "F-05"
+    ]
+  },
+  {
+    "id": "M-02.4",
+    "name": "Consentimento isolado",
+    "description": "Extensão local efêmera com rejeição por padrão e cadeia de auditoria",
+    "area": "Privacidade e LGPD",
+    "status": "PROTOTYPE",
+    "priority": 4,
+    "requirements": [
+      "D-01",
+      "D-07"
+    ]
+  },
+  {
+    "id": "M-02.5",
+    "name": "Token Exchange RFC 8693",
+    "description": "Aguardando adapter actor_token, WSO2 update >=7.3.0.18",
+    "area": "Workloads e agentes",
+    "status": "PENDING",
+    "priority": 5,
+    "requirements": [
+      "A-05",
+      "G-08"
+    ]
+  },
+  {
+    "id": "M-02.6",
+    "name": "Repositórios simultâneos",
+    "description": "Reutilizar OpenLDAP e credenciais primárias do repositório base",
+    "area": "Migração e integrações",
+    "status": "UPSTREAM_REQUIRED",
+    "priority": 6,
+    "requirements": [
+      "H-09"
+    ]
+  },
+  {
+    "id": "M-02.7",
+    "name": "Onboarding terceiro tenant",
+    "description": "Reutilizar bootstrap API e implementar diff e verificação de continuidade",
+    "area": "Multitenancy e B2B",
+    "status": "UPSTREAM_REQUIRED",
+    "priority": 7,
+    "requirements": [
+      "B-03",
+      "H-11"
+    ]
+  },
+  {
+    "id": "UC-01",
+    "name": "Experiência pessoa física",
+    "description": "Quatro jornadas web/mobile-style e perfil mínimo",
+    "area": "B2C",
+    "status": "PARTIAL",
+    "priority": 8,
+    "requirements": [
+      "F-01",
+      "F-02"
+    ]
+  },
+  {
+    "id": "UC-02",
+    "name": "Portal sellers B2B",
+    "description": "Hierarquia e administração delegada do projeto original",
+    "area": "B2B",
+    "status": "UPSTREAM_REQUIRED",
+    "priority": 9,
+    "requirements": [
+      "B-13",
+      "B-14"
+    ]
+  },
+  {
+    "id": "UC-03",
+    "name": "Machine-to-machine",
+    "description": "Client Credentials via token endpoint real; token nunca sai do BFF",
+    "area": "Workloads e agentes",
+    "status": "IMPLEMENTED_NEEDS_WSO2",
+    "priority": 10,
+    "requirements": [
+      "A-07",
+      "G-01"
+    ]
+  },
+  {
+    "id": "UC-04",
+    "name": "Loja, PDV e central",
+    "description": "Device Authorization e CIBA em integração futura",
+    "area": "Multicanal",
+    "status": "PENDING",
+    "priority": 11,
+    "requirements": [
+      "E-01",
+      "E-02"
+    ]
+  },
+  {
+    "id": "DIFF-AI",
+    "name": "AI Agent + MCP humano no loop",
+    "description": "Preservar agente nativo e fallback explicitamente separados",
+    "area": "Workloads e agentes",
+    "status": "UPSTREAM_REQUIRED",
+    "priority": 12,
+    "requirements": [
+      "G-09",
+      "G-10"
+    ]
+  },
+  {
+    "id": "MIG-01",
+    "name": "Migração de Doorkeeper",
+    "description": "Credenciais e ID mapping com rollback e dados sintéticos",
+    "area": "Migração e integrações",
+    "status": "PENDING",
+    "priority": 13,
+    "requirements": [
+      "H-01",
+      "H-02"
+    ]
+  }
 ]

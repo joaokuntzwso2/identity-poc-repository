@@ -4,6 +4,9 @@ import {resolve,join,extname,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {PreviewStore} from './store.mjs';
 import {RetailStore} from './retail-store.mjs';
+import {createOperationsRoutes} from './p1-routes.mjs';
+import {createProviderHttpRoute} from '../identity-bff/src/provider/http-route.mjs';
+import {getMode} from '../identity-bff/src/provider/core.mjs';
 const base=resolve(fileURLToPath(new URL('../../',import.meta.url)));
 const distDir=resolve(base,'apps/experience-center/dist');
 const defaults=['http://127.0.0.1:5173','http://localhost:5173','http://127.0.0.1:4173','http://localhost:4173'];
@@ -16,6 +19,8 @@ async function body(req){let raw='';for await(const part of req){raw+=part;if(ra
 export function createPreviewServer({dbFile=resolve(base,'var/identity-preview.sqlite'),allowedOrigins=defaults,serveDist=true}={}){
  const store=new PreviewStore(dbFile);
  const retail=new RetailStore(store.db);
+ const operationsRoute=createOperationsRoutes(store.db);
+ const providerRoute=createProviderHttpRoute();
  const server=http.createServer(async(req,res)=>{
   res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
   const origin=req.headers.origin;
@@ -23,6 +28,8 @@ export function createPreviewServer({dbFile=resolve(base,'var/identity-preview.s
   if(req.method==='OPTIONS'){res.writeHead(204);res.end();return}
   const url=new URL(req.url||'/',`http://${HOST}:${PORT}`);const path=url.pathname;
   try{
+   if(await providerRoute({req,res,path,send}))return;
+   if(await operationsRoute({req,res,path,send,body}))return;
    if(path==='/api/experience/meta'&&req.method==='GET'){send(res,200,{mode:'synthetic-preview',identityProvider:'not_configured',identityVerified:false,liveAcceptance:false,store:'local-sqlite',personas:'fictional'});return}
    if(path==='/api/experience/consents'&&req.method==='GET'){send(res,200,{mode:'synthetic-preview',items:store.listConsents(url.searchParams.get('persona')||'')});return}
    if(path==='/api/experience/assurance'&&req.method==='GET'){send(res,200,{mode:'synthetic-preview',items:store.listAttributes(url.searchParams.get('persona')||'')});return}
@@ -72,6 +79,7 @@ export function createPreviewServer({dbFile=resolve(base,'var/identity-preview.s
  return server;
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+ if(getMode(process.env)!=='story-preview'){console.error('Synthetic Experience API is not a live BFF; use real BFF integration for live mode.');process.exit(2)}
  if(process.env.EXPERIENCE_PREVIEW_ACK!=='YES_LOCAL_SYNTHETIC_ONLY'){console.error('Set EXPERIENCE_PREVIEW_ACK=YES_LOCAL_SYNTHETIC_ONLY to run synthetic-only loopback preview.');process.exit(1)}
  const server=createPreviewServer();server.listen(PORT,HOST,()=>console.log(`Synthetic-only Identity Experience preview at http://${HOST}:${PORT} (no WSO2 auth)`));
 }
