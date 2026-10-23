@@ -286,3 +286,11 @@ test-results/
 
 # Private operator documentation
 docs/IDENTITY_OPERATOR_RUNBOOK.md
+
+# Synthetic-only Identity Experience local state; never publish
+/var/identity-preview.sqlite*
+/var/*.sqlite*
+/var/*.db*
+/coverage/
+/test-results/
+/playwright-report/

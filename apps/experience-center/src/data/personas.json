@@ -1,0 +1,14 @@
+{
+  "version": "synthetic-v1",
+  "notice": "Fictional personas only. Not customer data or real authentication identities.",
+  "personas": [
+    {"id":"customer-ana","name":"Ana Costa","short":"AC","role":"Consumidora","kind":"customer","caption":"Cliente de Aurora e Brisa","brands":["aurora","brisa"],"relationships":["seller-marcos"],"contact":"ana@identidade.example","city":"Campinas, SP"},
+    {"id":"customer-rafael","name":"Rafael Nunes","short":"RN","role":"Consumidor","kind":"customer","caption":"Cliente de Aurora","brands":["aurora"],"relationships":[],"contact":"rafael@identidade.example","city":"Curitiba, PR"},
+    {"id":"seller-marcos","name":"Marcos Oliveira","short":"MO","role":"Gestor de seller","kind":"seller","caption":"Representante da loja parceira Horizonte","brands":["aurora"],"relationships":["customer-ana","admin-luiza"],"contact":"marcos@parceiro.example","city":"São Paulo, SP"},
+    {"id":"admin-luiza","name":"Luiza Ferreira","short":"LF","role":"Administradora","kind":"administrator","caption":"Administração delegada e políticas","brands":["aurora","brisa"],"relationships":["seller-marcos"],"contact":"luiza@identidade.example","city":"São Paulo, SP"},
+    {"id":"attendant-pedro","name":"Pedro Reis","short":"PR","role":"Atendimento","kind":"attendant","caption":"Operador de loja e central","brands":["aurora"],"relationships":["customer-ana"],"contact":"pedro@atendimento.example","city":"Belo Horizonte, MG"},
+    {"id":"analyst-camila","name":"Camila Lima","short":"CL","role":"Analista de segurança","kind":"analyst","caption":"Análise de risco e auditoria","brands":["aurora","brisa"],"relationships":["admin-luiza"],"contact":"camila@identidade.example","city":"Rio de Janeiro, RJ"},
+    {"id":"workload-recommender","name":"Serviço de recomendações","short":"WR","role":"Workload","kind":"workload","caption":"Aplicação M2M sem identidade humana","brands":["aurora"],"relationships":["agent-assistant"],"contact":null,"city":null},
+    {"id":"agent-assistant","name":"Agente de compras","short":"AI","role":"Agente autônomo","kind":"agent","caption":"Delegação em nome do usuário, com aprovação","brands":["aurora","brisa"],"relationships":["customer-ana","workload-recommender"],"contact":null,"city":null}
+  ]
+}
