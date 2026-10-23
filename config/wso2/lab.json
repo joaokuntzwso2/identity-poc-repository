@@ -1,0 +1,108 @@
+{
+  "schema": "identity.wso2.lab.v1",
+  "tenantDomain": "carbon.super",
+  "brands": [
+    {
+      "id": "aurora",
+      "name": "Aurora",
+      "sector": "aurora-sector",
+      "clients": [
+        {
+          "key": "AURORA_WEB",
+          "label": "Aurora Web",
+          "kind": "web",
+          "path": "/aurora.html",
+          "bffClientKey": "aurora-web"
+        },
+        {
+          "key": "AURORA_MOBILE",
+          "label": "Aurora Mobile Simulator",
+          "kind": "mobile-browser-preview",
+          "path": "/aurora-mobile.html",
+          "bffClientKey": "aurora-app"
+        }
+      ]
+    },
+    {
+      "id": "brisa",
+      "name": "Brisa",
+      "sector": "brisa-sector",
+      "clients": [
+        {
+          "key": "BRISA_WEB",
+          "label": "Brisa Web",
+          "kind": "web",
+          "path": "/brisa.html",
+          "bffClientKey": "brisa-web"
+        },
+        {
+          "key": "BRISA_MOBILE",
+          "label": "Brisa Mobile Simulator",
+          "kind": "mobile-browser-preview",
+          "path": "/brisa-mobile.html",
+          "bffClientKey": "brisa-app"
+        }
+      ]
+    }
+  ],
+  "b2bOrganizations": [
+    {
+      "key": "partner-nova",
+      "name": "Nova Seller Group",
+      "handle": "nova-seller-group"
+    },
+    {
+      "key": "partner-nova-outlet",
+      "name": "Nova Outlet",
+      "handle": "nova-outlet",
+      "parent": "partner-nova"
+    },
+    {
+      "key": "partner-lumen",
+      "name": "Lumen Merchant",
+      "handle": "lumen-merchant"
+    }
+  ],
+  "users": [
+    {
+      "key": "customer-ana",
+      "username": "lab-ana",
+      "givenName": "Ana",
+      "familyName": "Oliveira",
+      "email": "ana@example.invalid"
+    },
+    {
+      "key": "customer-leo",
+      "username": "lab-leo",
+      "givenName": "Leo",
+      "familyName": "Costa",
+      "email": "leo@example.invalid"
+    },
+    {
+      "key": "seller-marcos",
+      "username": "lab-marcos",
+      "givenName": "Marcos",
+      "familyName": "Alves",
+      "email": "marcos@example.invalid"
+    },
+    {
+      "key": "operator-luiza",
+      "username": "lab-luiza",
+      "givenName": "Luiza",
+      "familyName": "Pereira",
+      "email": "luiza@example.invalid"
+    }
+  ],
+  "m2m": [
+    {
+      "key": "inventory-workload",
+      "name": "Demo Inventory Workload",
+      "grant": "client_credentials"
+    },
+    {
+      "key": "agent-exchange-client",
+      "name": "Demo Agent Delegation Client",
+      "grant": "client_credentials"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {authenticatedInternalReset,rotatePreviewDatabase} from '../../scripts/wso2/preview-reset.mjs';
 import {readFileSync,existsSync,statSync} from 'node:fs';
 import {resolve,join,extname,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -17,9 +18,9 @@ function send(res,status,data,extra={}){const json=JSON.stringify(data);res.writ
 function fail(res,err){send(res,err?.status||500,{error:err?.status?err.message:'SERVER_ERROR',mode:'synthetic-preview'})}
 async function body(req){let raw='';for await(const part of req){raw+=part;if(raw.length>4096)throw Object.assign(new Error('BODY_TOO_LARGE'),{status:413})}let obj;try{obj=JSON.parse(raw||'{}')}catch{throw Object.assign(new Error('INVALID_JSON'),{status:400})}if(!obj||typeof obj!=='object'||Array.isArray(obj))throw Object.assign(new Error('INVALID_JSON'),{status:400});return obj}
 export function createPreviewServer({dbFile=resolve(base,'var/identity-preview.sqlite'),allowedOrigins=defaults,serveDist=true}={}){
- const store=new PreviewStore(dbFile);
- const retail=new RetailStore(store.db);
- const operationsRoute=createOperationsRoutes(store.db);
+ let store=new PreviewStore(dbFile);
+ let retail=new RetailStore(store.db);
+ let operationsRoute=createOperationsRoutes(store.db);
  const providerRoute=createProviderHttpRoute();
  const server=http.createServer(async(req,res)=>{
   res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
@@ -28,6 +29,12 @@ export function createPreviewServer({dbFile=resolve(base,'var/identity-preview.s
   if(req.method==='OPTIONS'){res.writeHead(204);res.end();return}
   const url=new URL(req.url||'/',`http://${HOST}:${PORT}`);const path=url.pathname;
   try{
+   if(path==='/api/experience/maintenance/reset'){
+    if(!authenticatedInternalReset(req,process.env.DEMO_RESET_OPERATOR_KEY)){send(res,403,{error:'OPERATOR_AUTH_REQUIRED'});return}
+    const archived=rotatePreviewDatabase(dbFile,store);
+    store=new PreviewStore(dbFile);retail=new RetailStore(store.db);operationsRoute=createOperationsRoutes(store.db);
+    send(res,200,{status:'PREVIEW_RESET',evidence:'ARCHIVED_NOT_DELETED',archived:archived.archived,acceptance:'NOT_VERIFIED'});return;
+   }
    if(await providerRoute({req,res,path,send}))return;
    if(await operationsRoute({req,res,path,send,body}))return;
    if(path==='/api/experience/meta'&&req.method==='GET'){send(res,200,{mode:'synthetic-preview',identityProvider:'not_configured',identityVerified:false,liveAcceptance:false,store:'local-sqlite',personas:'fictional'});return}

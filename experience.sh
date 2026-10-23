@@ -21,6 +21,7 @@ case "$cmd" in
     (cd apps/experience-center && npm exec -- vite build --config mobile.vite.config.ts)
     (cd apps/experience-center && npm exec -- vite build --config operations.vite.config.ts)
     (cd apps/experience-center && npm exec -- vite build --config provider.vite.config.ts)
+    (cd apps/experience-center && npm exec -- vite build --config wso2.vite.config.ts)
     ;;
   test)
     node --test services/experience-api/test/*.test.mjs

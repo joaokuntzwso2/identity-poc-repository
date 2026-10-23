@@ -1,5 +1,5 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync,existsSync} from 'node:fs';
-const root=new URL('../../',import.meta.url);
-test('four independent operations HTML launch entries exist',()=>{for(const item of ['b2b','onboarding','authorization','evidence-lab']){const url=new URL(`apps/experience-center/${item}.html`,root);assert(existsSync(url));assert.match(readFileSync(url,'utf8'),/operations\/entry.tsx/)}});
-test('UI visibly separates preview evidence from live verification',()=>{const src=readFileSync(new URL('apps/experience-center/src/operations/OperationsLab.tsx',root),'utf8');assert.match(src,/0 Live Verified/);assert.match(src,/sem identidade autenticada/);assert.match(src,/NÃO EXECUTADO/);assert.match(src,/NOT_VERIFIED/)});
-test('server uses append-only evidence store',()=>{const src=readFileSync(new URL('services/experience-api/p1-store.mjs',root),'utf8');assert.match(src,/lab_events_immutable_delete/);assert.match(src,/acceptanceStatus:'NOT_VERIFIED'/)});
+import { test } from 'node:test'; import assert from 'node:assert/strict'; import { readFileSync, existsSync } from 'node:fs';
+const root = new URL('../../', import.meta.url);
+test('four independent operations HTML launch entries exist', () => { for (const item of ['b2b', 'onboarding', 'authorization', 'evidence-lab']) { const url = new URL(`apps/experience-center/${item}.html`, root); assert(existsSync(url)); assert.match(readFileSync(url, 'utf8'), /operations\/entry.tsx/) } });
+test('UI visibly separates preview evidence from live verification', () => { const src = readFileSync(new URL('apps/experience-center/src/operations/OperationsLab.tsx', root), 'utf8'); assert.match(src, /0 Live Verified/); assert.match(src, /sem identidade autenticada/); assert.match(src, /NÃO EXECUTADO/); assert.match(src, /NOT_VERIFIED/) });
+test('server uses append-only evidence store', () => { const src = readFileSync(new URL('services/experience-api/p1-store.mjs', root), 'utf8'); assert.match(src, /lab_events_immutable_delete/); assert.match(src, /acceptanceStatus:'NOT_VERIFIED'/) });

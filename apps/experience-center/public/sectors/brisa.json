@@ -1,0 +1,4 @@
+[
+  "http://127.0.0.1:4000/auth/brisa-app/callback",
+  "http://127.0.0.1:4000/auth/brisa-web/callback"
+]

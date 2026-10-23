@@ -297,3 +297,11 @@ docs/IDENTITY_OPERATOR_RUNBOOK.md
 
 # Private provider discovery evidence (not customer acceptance)
 /var/provider-readiness.json
+
+# WSO2 lab secrets, inventory, evidence and operator attestation
+/var/wso2/
+/var/identity-preview.sqlite*
+
+/iamctl.json
+/init.json__pycache__/
+*.py[cod]

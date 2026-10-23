@@ -1,0 +1,16 @@
+services:
+  identity-server:
+    # WSO2 public wso2/wso2is:7.3.0 is GA only, NOT 7.3.0 update 18.
+    # Set this to an entitled WSO2 Updates image, verified to be >= 7.3.0.18.
+    image: ${WSO2_UPDATED_IMAGE:?Set the updated WSO2 7.3.0 image reference, update >=18}
+    ports:
+      - "127.0.0.1:9443:9443"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSk https://localhost:9443/health-check >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 8s
+      retries: 20
+      start_period: 120s
+    # Do not mount mutable database/config over WSO2 internal paths without a validated deployment.toml.
+    # Production: external PostgreSQL, Secrets Manager, TLS ALB and managed persistent volumes.
