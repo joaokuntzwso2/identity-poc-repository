@@ -1,0 +1,33 @@
+# Companion stack. WSO2 IS, Keycloak and OpenLDAP remain in the UPSTREAM demo
+# and must not be reimplemented or represented by mock identity providers.
+services:
+  identity-bff:
+    build:
+      context: .
+      dockerfile: Dockerfile.bff
+    env_file: .env
+    environment:
+      PORT: '4100'
+      BIND_HOST: 0.0.0.0
+    networks: [demo-private]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  experience-center:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    environment:
+      BFF_PROXY_TARGET: http://identity-bff:4100
+    ports: ["127.0.0.1:5173:5173"]
+    networks: [demo-private]
+    depends_on:
+      identity-bff:
+        condition: service_healthy
+    restart: unless-stopped
+networks:
+  demo-private:
+    driver: bridge

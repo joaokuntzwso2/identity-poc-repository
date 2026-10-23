@@ -1,0 +1,24 @@
+name: Public content safeguards
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check public content
+        env:
+          PRIVATE_BLOCKLIST_B64: ${{ secrets.PUBLIC_PRIVATE_PATTERNS_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PRIVATE_BLOCKLIST_B64" ]; then
+            echo 'PUBLICATION_BLOCKED: required repository secret is missing (see private setup guide)' >&2
+            exit 1
+          fi
+          printf '%s' "$PRIVATE_BLOCKLIST_B64" | base64 --decode > "$RUNNER_TEMP/private-patterns.txt"
+          python3 scripts/security/check_public.py --tree HEAD --patterns "$RUNNER_TEMP/private-patterns.txt"

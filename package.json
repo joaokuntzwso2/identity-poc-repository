@@ -1,0 +1,29 @@
+{
+  "name": "poc-identity-experience-center",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "services/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @poc/experience-center",
+    "start:bff": "node services/identity-bff/src/server.js",
+    "test": "node --test services/identity-bff/test/*.test.js",
+    "check": "npm test && node scripts/preflight.mjs",
+    "build": "npm run build --workspace @poc/experience-center",
+    "test:pairwise-live": "node scripts/run-live-pairwise.mjs",
+    "identity:test": "node --test services/identity-bff/test/identity-*.test.js",
+    "identity:audit": "node scripts/identity/release-gates.mjs",
+    "identity:phase1": "node scripts/identity/phase1-preflight.mjs",
+    "identity:exchange": "node scripts/identity/token-exchange-live.mjs",
+    "identity:db:migrate": "node scripts/identity/db-migrate.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

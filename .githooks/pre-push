@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo="$(git rev-parse --show-toplevel)"
+cd "$repo"
+python3 scripts/security/check_public.py --tree HEAD
+# Refuse pushing additional branches or tags not reviewed by this first-commit gate.
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$local_ref" in
+        refs/heads/main) ;;
+        *) echo "PUBLICATION_BLOCKED: only refs/heads/main is allowed by this starter pre-push hook" >&2; exit 1;;
+    esac
+    head_sha="$(git rev-parse HEAD)"
+    [[ "$local_sha" == "$head_sha" ]] || {
+        echo "PUBLICATION_BLOCKED: pushing a ref other than the reviewed HEAD" >&2
+        exit 1
+    }
+done
