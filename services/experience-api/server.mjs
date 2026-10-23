@@ -3,6 +3,7 @@ import {readFileSync,existsSync,statSync} from 'node:fs';
 import {resolve,join,extname,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {PreviewStore} from './store.mjs';
+import {RetailStore} from './retail-store.mjs';
 const base=resolve(fileURLToPath(new URL('../../',import.meta.url)));
 const distDir=resolve(base,'apps/experience-center/dist');
 const defaults=['http://127.0.0.1:5173','http://localhost:5173','http://127.0.0.1:4173','http://localhost:4173'];
@@ -14,6 +15,7 @@ function fail(res,err){send(res,err?.status||500,{error:err?.status?err.message:
 async function body(req){let raw='';for await(const part of req){raw+=part;if(raw.length>4096)throw Object.assign(new Error('BODY_TOO_LARGE'),{status:413})}let obj;try{obj=JSON.parse(raw||'{}')}catch{throw Object.assign(new Error('INVALID_JSON'),{status:400})}if(!obj||typeof obj!=='object'||Array.isArray(obj))throw Object.assign(new Error('INVALID_JSON'),{status:400});return obj}
 export function createPreviewServer({dbFile=resolve(base,'var/identity-preview.sqlite'),allowedOrigins=defaults,serveDist=true}={}){
  const store=new PreviewStore(dbFile);
+ const retail=new RetailStore(store.db);
  const server=http.createServer(async(req,res)=>{
   res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
   const origin=req.headers.origin;
@@ -33,6 +35,24 @@ export function createPreviewServer({dbFile=resolve(base,'var/identity-preview.s
     if(change[1]==='consents')send(res,200,{mode:'synthetic-preview',item:store.transition(persona,change[2],data.action)});
     else send(res,200,{mode:'synthetic-preview',item:store.updateAttribute(persona,change[2],data.value)});
     return;
+   }
+   // Synthetic storefront API. Persona selection is not user authentication.
+   const retailRoute=path.match(/^\/api\/retail\/(aurora|brisa)\/(bootstrap|profile|preferences|security|addresses|wishlist|checkout)$/);
+   if(retailRoute){
+    const [,brand,endpoint]=retailRoute;
+    if(endpoint==='bootstrap'&&req.method==='GET'){send(res,200,retail.snapshot(url.searchParams.get('persona')||'',brand));return;}
+    if(req.method!=='POST')throw Object.assign(new Error('METHOD_NOT_ALLOWED'),{status:405});
+    if(req.headers['x-experience-preview']!=='yes')throw Object.assign(new Error('PREVIEW_INTENT_REQUIRED'),{status:403});
+    if(req.headers['content-type']?.split(';')[0]!=='application/json')throw Object.assign(new Error('JSON_REQUIRED'),{status:415});
+    const data=await body(req),persona=data.persona;
+    let item;
+    if(endpoint==='profile')item=retail.profile(persona,brand,data.changes||{});
+    if(endpoint==='preferences')item=retail.preferences(persona,brand,data.changes||{});
+    if(endpoint==='security')item=retail.security(persona,brand,data.action,data.id);
+    if(endpoint==='addresses')item=retail.address(persona,brand,data.action,data.values||{});
+    if(endpoint==='wishlist')item=retail.wishlist(persona,brand,data.productId);
+    if(endpoint==='checkout')item=retail.order(persona,brand,data.action,data);
+    send(res,200,{mode:'synthetic-preview',identityVerified:false,item});return;
    }
    if(path.startsWith('/api/')){send(res,404,{error:'NOT_FOUND'});return}
    if(!serveDist||req.method!=='GET'&&req.method!=='HEAD'){send(res,404,{error:'NOT_FOUND'});return}

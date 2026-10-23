@@ -1,0 +1,159 @@
+{
+  "aurora": [
+    {
+      "id": "a1",
+      "name": "Fone Studio Pro",
+      "category": "Áudio",
+      "price": 799,
+      "oldPrice": 999,
+      "art": "headphones",
+      "badge": "Mais vendido",
+      "description": "Som imersivo, cancelamento de ruído inteligente e conforto durante todo o dia.",
+      "color": "#bde8e5"
+    },
+    {
+      "id": "a2",
+      "name": "Caixa Echo One",
+      "category": "Áudio",
+      "price": 449,
+      "art": "speaker",
+      "badge": "Novidade",
+      "description": "Som potente e conexão sem fio com a sua rotina.",
+      "color": "#d7e3f6"
+    },
+    {
+      "id": "a3",
+      "name": "Relógio Pulse",
+      "category": "Wearables",
+      "price": 1199,
+      "oldPrice": 1399,
+      "art": "watch",
+      "description": "Seu dia em movimento com design leve e monitoramento de atividades.",
+      "color": "#dde7ee"
+    },
+    {
+      "id": "a4",
+      "name": "Luminária Orbit",
+      "category": "Casa smart",
+      "price": 289,
+      "art": "lamp",
+      "description": "Controle a intensidade e crie a atmosfera certa para cada momento.",
+      "color": "#e5ece4"
+    },
+    {
+      "id": "a5",
+      "name": "Studio Pro Sand",
+      "category": "Áudio",
+      "price": 849,
+      "art": "headphones",
+      "badge": "Nova cor",
+      "description": "O mesmo som de referência numa edição em tons suaves.",
+      "color": "#e8dfda"
+    },
+    {
+      "id": "a6",
+      "name": "Echo One Mini",
+      "category": "Áudio",
+      "price": 299,
+      "art": "speaker",
+      "description": "Música com presença num formato que cabe em qualquer espaço.",
+      "color": "#e0d8ed"
+    },
+    {
+      "id": "a7",
+      "name": "Pulse Active",
+      "category": "Wearables",
+      "price": 999,
+      "art": "watch",
+      "description": "Acompanhe sua atividade diária com uma tela nítida e intuitiva.",
+      "color": "#dbe9e1"
+    },
+    {
+      "id": "a8",
+      "name": "Orbit Desk",
+      "category": "Casa smart",
+      "price": 359,
+      "art": "lamp",
+      "description": "Iluminação essencial para seu espaço de criação.",
+      "color": "#e5e2f0"
+    }
+  ],
+  "brisa": [
+    {
+      "id": "b1",
+      "name": "Poltrona Alva",
+      "category": "Móveis",
+      "price": 1890,
+      "oldPrice": 2290,
+      "art": "chair",
+      "badge": "Coleção Essencial",
+      "description": "Um convite a desacelerar. Linhas orgânicas e presença acolhedora.",
+      "color": "#e6d4c5"
+    },
+    {
+      "id": "b2",
+      "name": "Vaso Solano",
+      "category": "Decoração",
+      "price": 219,
+      "art": "vase",
+      "description": "Cerâmica com textura artesanal para composições atemporais.",
+      "color": "#ebdfcc"
+    },
+    {
+      "id": "b3",
+      "name": "Cafeteira Nuvem",
+      "category": "Cozinha",
+      "price": 699,
+      "art": "coffee",
+      "badge": "Mais amado",
+      "description": "Um ritual de café acolhedor para começar as manhãs com calma.",
+      "color": "#e6ded8"
+    },
+    {
+      "id": "b4",
+      "name": "Manta Linho",
+      "category": "Têxteis",
+      "price": 349,
+      "art": "throw",
+      "description": "Trama macia e toque natural para um aconchego extra.",
+      "color": "#e7dbd1"
+    },
+    {
+      "id": "b5",
+      "name": "Poltrona Alva Terracota",
+      "category": "Móveis",
+      "price": 1990,
+      "art": "chair",
+      "description": "A nossa poltrona favorita em um tom que abraça a casa.",
+      "color": "#edd2c4"
+    },
+    {
+      "id": "b6",
+      "name": "Vaso Horizonte",
+      "category": "Decoração",
+      "price": 279,
+      "art": "vase",
+      "badge": "Edição especial",
+      "description": "Formas suaves e acabamento texturizado em cerâmica clara.",
+      "color": "#eee5d9"
+    },
+    {
+      "id": "b7",
+      "name": "Cafeteira Bruma",
+      "category": "Cozinha",
+      "price": 749,
+      "art": "coffee",
+      "description": "Uma pausa bem preparada, com simplicidade e elegância.",
+      "color": "#e4dfd5"
+    },
+    {
+      "id": "b8",
+      "name": "Manta Areia",
+      "category": "Têxteis",
+      "price": 399,
+      "art": "throw",
+      "description": "Conforto leve e textura natural para todos os dias.",
+      "color": "#eae0d3"
+    }
+  ]
+}

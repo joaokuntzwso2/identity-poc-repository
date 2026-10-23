@@ -17,6 +17,7 @@ case "$cmd" in
     ;;
   build)
     npm --prefix apps/experience-center run build
+    (cd apps/experience-center && npm exec -- vite build --config retail.vite.config.ts)
     ;;
   test)
     node --test services/experience-api/test/*.test.mjs
@@ -31,11 +32,11 @@ case "$cmd" in
     ;;
   help|*)
     cat <<'HELP'
-Identity Experience v0.3
+Identity Experience v0.4
   ./experience.sh dev           local API + React Vite development server
-  ./experience.sh build         frontend build
+  ./experience.sh build         Experience Center + two complete branded websites
   ./experience.sh serve         locally serve built UI and API
-  ./experience.sh preview-test  SQLite/consent/assurance/API contract tests
+  ./experience.sh preview-test  SQLite/consent/assurance/retail/API contract tests
   ./experience.sh test          preview tests and existing repository npm test
   ./experience.sh check         preview tests and staged publication check
 
