@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# BEGIN WSO2_LAB_AUTO_LOCAL_TLS (reviewable local-only trust helper)
+if [[ "${1-}" == 'bootstrap' || "${1-}" == 'tenants-only' ]]; then
+  _wso2_lab_repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  if [[ -z "${NODE_EXTRA_CA_CERTS:-}" ]]; then
+    _wso2_lab_ca="$(bash "$_wso2_lab_repo/scripts/wso2/bootstrap-local-tls.sh")" || exit 1
+    export NODE_EXTRA_CA_CERTS="$_wso2_lab_ca"
+  fi
+fi
+# END WSO2_LAB_AUTO_LOCAL_TLS
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"

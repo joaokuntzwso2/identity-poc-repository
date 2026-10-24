@@ -59,8 +59,16 @@ async function jsonCall(fetchImpl,base,path,{method='GET',auth,payload}={}){
 }
 function tenantList(data){
  const arr=Array.isArray(data)?data:data?.tenants??data?.list??data?.resources;
- if(!Array.isArray(arr))throw Error('TENANT_LIST_RESPONSE_SHAPE_UNRECOGNIZED');
- return arr;
+ if(Array.isArray(arr))return arr;
+ // WSO2 IS 7.3 can omit `tenants` for an empty paginated result.
+ // Accept only that exact empty shape; never hide malformed/nonempty responses.
+ if(data && typeof data==='object' && !Array.isArray(data) &&
+    Object.keys(data).length===4 &&
+    ['totalResults','startIndex','count','links'].every(k=>Object.hasOwn(data,k)) &&
+    data.totalResults===0 && data.count===0 &&
+    Number.isSafeInteger(data.startIndex) && data.startIndex>=0 &&
+    Array.isArray(data.links) && data.links.length===0)return [];
+ throw Error('TENANT_LIST_RESPONSE_SHAPE_UNRECOGNIZED');
 }
 async function remoteTenants(fetchImpl,base,admin){
  const collected=[];
@@ -82,7 +90,7 @@ export async function tenantApiPreflight({env=process.env,fetchImpl=fetch}={}){
  const tenants=await remoteTenants(fetchImpl,base,{username:env.WSO2_ADMIN_USER,password:env.WSO2_ADMIN_PASSWORD});
  return {tenantApiRoute:ROOT_TENANT_LIST,authentication:'VERIFIED_READ_ONLY',tenantCount:tenants.size,tenantWrites:0};
 }
-function safeOwner(){return {username:'labtenantadmin',password:randomBytes(30).toString('base64url'),
+function safeOwner(){return {username:'labtenantadmin',password:randomBytes(21).toString('base64url'),
  firstname:'Identity',lastname:'Lab',email:'lab-tenant-admin@example.invalid',provisioningMethod:'inline-password'};}
 function tenantPath(domain,suffix){return `/t/${encodeURIComponent(domain)}${suffix}`;}
 function clientPayload(app,uri){return {
@@ -109,26 +117,84 @@ export async function bootstrapTenants({env=process.env,fetchImpl=fetch,stateFil
    item={domain,owner:safeOwner(),state:'prepared',owned:true};
    s.tenants[brand]=item;privateWrite(stateFile,s);
   }
-  if(item.state==='prepared'&&live.has(domain)){
-   // A timed-out tenant POST is ambiguous. Verify ownership with the saved
-   // tenant-admin credentials before reconciling it as lab-owned.
-   await jsonCall(fetchImpl,base,tenantPath(domain,'/api/server/v1/applications?limit=1'),
-    {auth:{username:`${item.owner.username}@${domain}`,password:item.owner.password}});
+  if(item.owned!==true||!item.owner?.username||!item.owner?.password||
+     !['prepared','create-started','created'].includes(item.state))
+   throw Error(`TENANT_OWNERSHIP_JOURNAL_INVALID_${brand}`);
+  // A prepared journal never adopts a tenant that appeared independently.
+  if(item.state==='prepared'&&live.has(domain))
+   throw Error(`TENANT_PREPARED_BUT_DOMAIN_EXISTS_${brand}_MANUAL_REVIEW`);
+  if(item.createOutcome==='CONFLICT_409'||item.createOutcome==='PARTIAL_206')
+   throw Error(`TENANT_CREATE_PREVIOUS_AMBIGUOUS_RESPONSE_${brand}_MANUAL_REVIEW`);
+  if(item.state==='create-started'&&!live.has(domain))
+   throw Error(`TENANT_CREATE_OUTCOME_UNCERTAIN_${brand}_MANUAL_REVIEW`);
+  if(item.state==='created'&&!live.has(domain))
+   throw Error(`JOURNALED_TENANT_MISSING_${brand}_MANUAL_REVIEW`);
+  if(item.state==='prepared'){
+   item.state='create-started';privateWrite(stateFile,s);
+   let created;
+   try{
+    created=await jsonCall(fetchImpl,base,ROOT_TENANT_LIST,{method:'POST',auth:admin,payload:{
+     name:brand==='aurora'?'Identity Lab Aurora':'Identity Lab Brisa',domain,owners:[item.owner]}});
+   }catch(e){
+    if(e.status===409){item.createOutcome='CONFLICT_409';privateWrite(stateFile,s);}
+    throw e;
+   }
+   // 206 is partial; a 409 is a collision. Neither can be automatically adopted.
+   if(created.status!==201){
+    if(created.status===206){item.createOutcome='PARTIAL_206';privateWrite(stateFile,s);}
+    throw Error(`TENANT_CREATE_HTTP_${created.status}_${brand}_MANUAL_REVIEW`);
+   }
+   item.createOutcome='ACKNOWLEDGED_201';privateWrite(stateFile,s);
+   const refreshed=await remoteTenants(fetchImpl,base,admin);
+   if(!refreshed.has(domain))
+    throw Error(`TENANT_NOT_PRESENT_AFTER_CREATE_${brand}_MANUAL_REVIEW`);
   }
-  if(item.state==='prepared'&&!live.has(domain)){
-   // Save owner credentials first: if WSO2 creates a tenant but the process
-   // crashes, the prepared journal allows exact-state reconciliation.
-   await jsonCall(fetchImpl,base,ROOT_TENANT_LIST,{method:'POST',auth:admin,payload:{
-    name:brand==='aurora'?'Identity Lab Aurora':'Identity Lab Brisa',domain,owners:[item.owner]}});
-   live.add(domain);
-  }
-  if(!live.has(domain))throw Error(`TENANT_NOT_PRESENT_AFTER_CREATE_${brand}`);
-  item.state='created';privateWrite(stateFile,s);
-  emit(`ROOT_TENANT_VERIFIED ${brand} ${domain}`);
+  // The super-tenant tenant-management API is the authoritative root inventory.
+  // Tenant-scoped Basic authentication may be disabled, so it is NOT an ownership test.
+  const tenantResult=await jsonCall(fetchImpl,base,
+   `${ROOT_TENANT_LIST}/domain/${encodeURIComponent(domain)}`,{auth:admin});
+  const tenant=tenantResult.data;
+  if(tenantResult.status!==200||tenant?.domain!==domain||!ID.test(tenant?.id||'')||
+     tenant?.lifecycleStatus?.activated!==true)
+   throw Error(`ROOT_TENANT_READBACK_FAILED_${brand}`);
+  if(item.tenantId&&item.tenantId!==tenant.id)
+   throw Error(`ROOT_TENANT_ID_CHANGED_${brand}_MANUAL_REVIEW`);
+  const ownersResult=await jsonCall(fetchImpl,base,
+   `${ROOT_TENANT_LIST}/${encodeURIComponent(tenant.id)}/owners`,{auth:admin});
+  if(ownersResult.status!==200||!Array.isArray(ownersResult.data))
+   throw Error(`ROOT_OWNER_LIST_INVALID_${brand}`);
+  const matches=ownersResult.data.filter(x=>x?.username===item.owner.username&&ID.test(x?.id||''));
+  if(matches.length!==1)
+   throw Error(`ROOT_OWNER_MISMATCH_${brand}_MANUAL_REVIEW`);
+  const ownerId=matches[0].id;
+  if(item.ownerId&&item.ownerId!==ownerId)
+   throw Error(`ROOT_OWNER_ID_CHANGED_${brand}_MANUAL_REVIEW`);
+  if(item.ownerRecovery&&item.ownerRecovery.state!=='update-started')
+   throw Error(`ROOT_OWNER_RECOVERY_STATE_INVALID_${brand}_MANUAL_REVIEW`);
+  if(item.ownerRecovery&&(item.ownerRecovery.tenantId!==tenant.id||
+      item.ownerRecovery.ownerId!==ownerId))
+   throw Error(`ROOT_OWNER_RECOVERY_ID_MISMATCH_${brand}_MANUAL_REVIEW`);
+  const detailResult=await jsonCall(fetchImpl,base,
+   `${ROOT_TENANT_LIST}/${encodeURIComponent(tenant.id)}/owners/${encodeURIComponent(ownerId)}`,
+   {auth:admin});
+  const detail=detailResult.data;
+  if(detailResult.status!==200||detail?.id!==ownerId||detail?.username!==item.owner.username||
+     !['email','firstname','lastname'].every(k=>detail[k]===item.owner[k]))
+   throw Error(`ROOT_OWNER_DETAILS_MISMATCH_${brand}_MANUAL_REVIEW`);
+  // Durable identity proof is NOT a password, session or API-permission proof.
+  item.tenantId=tenant.id;item.ownerId=ownerId;
+  item.state='created';item.ownerAuthentication='NOT_VERIFIED';
+  privateWrite(stateFile,s);
+  live.add(domain);
+  emit(`ROOT_TENANT_INVENTORY_VERIFIED ${brand} ${domain} (admin login NOT_VERIFIED)`);
  }
  // Don't convert root-tenant success into a false SSO or OIDC acceptance pass.
  s.tenantProvisioning='TWO_ROOT_TENANTS_CREATED_OR_VERIFIED';
  if(onlyTenants){privateWrite(stateFile,s);return s;}
+ // Tenant APIs reject Basic authentication by tenant policy in this live instance.
+ // Don't attempt the four OIDC application writes without a scoped management token.
+ s.acceptance='NOT_VERIFIED';privateWrite(stateFile,s);
+ throw Error('TENANT_OIDC_MANAGEMENT_OAUTH_NOT_CONFIGURED');
  let urls;
  try{urls=sectorUris(env)}catch(e){
   if(!e.message.includes('REQUIRED_TWO_DISTINCT_HTTPS_HOSTS'))throw e;
@@ -190,7 +256,7 @@ export async function bootstrapTenants({env=process.env,fetchImpl=fetch,stateFil
 export function tenantStatus({env=process.env,stateFile=statePath}={}){
  const base=origin(env.WSO2_BASE_URL||'');const domainEnv={aurora:env.WSO2_AURORA_ROOT_TENANT||'aurora.identity.test',brisa:env.WSO2_BRISA_ROOT_TENANT||'brisa.identity.test'};
  const s=readState(stateFile,base,domainEnv);
- return {tenants:BRANDS.map(brand=>({brand,domain:s.tenants[brand]?.domain||domainEnv[brand],state:s.tenants[brand]?.state||'MISSING'})),
+ return {tenants:BRANDS.map(brand=>({brand,domain:s.tenants[brand]?.domain||domainEnv[brand],state:s.tenants[brand]?.state||'MISSING',ownerAuthentication:s.tenants[brand]?.ownerAuthentication||'NOT_VERIFIED',ownerRecovery:s.tenants[brand]?.ownerRecovery?.state||'NOT_STARTED'})),
   oidcClients:Object.entries(s.clients).map(([key,c])=>({key,tenant:c.tenant,state:c.state,appId:c.id||null,sectorUri:c.sectorUri})),
   tenantProvisioning:s.tenantProvisioning||'NOT_STARTED',pairwise:s.pairwise||'NOT_STARTED',crossTenantSSO:'NOT_VERIFIED',signedPairwiseSub:'NOT_VERIFIED',identityBff:'NOT_INTEGRATED',acceptance:'NOT_VERIFIED'};
 }

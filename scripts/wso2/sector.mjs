@@ -20,7 +20,7 @@ export function sectorUris(env=process.env){
   let base;try{base=new URL(env[key])}catch{throw Error(`${key}_INVALID_URL`)}
   if(base.protocol!=='https:'||base.username||base.password||base.hash||base.search||base.pathname!=='/')throw Error(`${key}_INVALID_HTTPS_BASE`);
   if(!base.hostname||base.hostname==='localhost'||base.hostname==='127.0.0.1')throw Error(`${key}_PUBLICLY_REACHABLE_HOST_REQUIRED`);
-  urls[brand]=new URL(`/sectors/${brand}.json`,base).href;
+  urls[brand]=new URL(`/sector.json`,base).href;
  }
  if(new URL(urls.aurora).hostname.toLowerCase()===new URL(urls.brisa).hostname.toLowerCase())throw Error('SECTOR_HOSTS_MUST_DIFFER_NOT_ONLY_PATHS');
  return urls;

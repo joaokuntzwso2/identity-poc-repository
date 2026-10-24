@@ -29,7 +29,7 @@ test('TypeScript build regressions addressed without disabling type-checking', (
     assert.match(center, /function\s+resolveSidebarTitle\s*\(/);
     assert.match(center, /resolveSidebarTitle\s*\(\s*sidebar\s*,\s*area\s*\)/);
     assert.doesNotMatch(center, /sidebar\s*\.\s*flatMap\s*\(/);
-    assert.match(load('apps/experience-center/src/operations/OperationsLab.tsx'), /children\?:React\.ReactNode/);
+    assert.match(load('apps/experience-center/src/operations/OperationsLab.tsx'), /children\?:\s*React\.ReactNode/);
     const runner = load('experience.sh');
     assert.match(runner, /npm --prefix apps\/experience-center run build/);
     assert.match(runner, /operations\.vite\.config\.ts/);
