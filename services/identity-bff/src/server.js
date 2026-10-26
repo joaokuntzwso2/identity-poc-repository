@@ -7,9 +7,12 @@ import { DemoSessionStore } from './session-store.js';
 import { appConfig, brands, clients } from './config.js';
 import { evaluatePairwise } from './pairwise.js';
 import { ConsentLedger } from './audit.js';
+import { inspectAccessToken, requireAuthorityForClient } from './wso2-authority.js';
 import { handleDurableConsent } from './identity/consent-api.js'; // IDENTITY_CORRECTIONS_V1
 
 const ledger = new ConsentLedger();
+const wso2Live = process.env.IDENTITY_MODE === 'live-wso2';
+if (process.env.NODE_ENV === 'production' && !wso2Live) throw new Error('LIVE_WSO2_REQUIRED_IN_PRODUCTION');
 const sessionStore = new DemoSessionStore({
   maxSessions: appConfig.maxSessions, secure: appConfig.origin.startsWith('https:')
 });
@@ -50,7 +53,7 @@ function loggedInSubjects(s) {
   return new Set(Object.values(s.logins).filter(x => x.verified).map(x => `${x.claims.iss}|${x.claims.sub}`));
 }
 function hasAuth(s) { return Object.values(s.logins).some(v => v.verified === true); }
-function operator(s) { const identities = Object.values(s.logins).filter(v => v.verified === true).map(v => `${v.claims.iss}|${v.claims.sub}`); return identities.some(v => appConfig.adminAllowlist.includes(v)); }
+function operator(s) { if (wso2Live) return false; const identities = Object.values(s.logins).filter(v => v.verified === true).map(v => `${v.claims.iss}|${v.claims.sub}`); return identities.some(v => appConfig.adminAllowlist.includes(v)); }
 function requirePost(req, res, s, { operatorOnly = false } = {}) {
   if (req.method !== 'POST') { reply(res, 405, { error: 'method_not_allowed' }); return false; }
   const origin = req.headers.origin;
@@ -86,6 +89,59 @@ function actualSectorUri(brand) { return process.env[`SECTOR_${brand.toUpperCase
 function safeBrand(brand) { return Object.hasOwn(brands, brand); }
 
 const apiHandler = async (req, res, u, s) => {
+  // P0: operational identity comes only from current WSO2 access token introspection.
+  if (wso2Live && u.pathname === '/api/identity/me') {
+    if (req.method !== 'GET') return reply(res, 405, { error: 'method_not_allowed' });
+    const status = {};
+    let unavailable = false;
+    for (const [key, c] of Object.entries(clients)) {
+      const login = s.logins[key];
+      const entry = { configured: Boolean(c.clientId && c.issuer), authenticated: false,
+        issuer: null, subjectFingerprint: null, verifiedAt: null, permissions: [] };
+      if (login?.verified) {
+        try {
+          const current = await inspectAccessToken(login, c);
+          if (!current.active) delete s.logins[key];
+          else {
+            entry.authenticated = true; entry.issuer = login.claims.iss;
+            entry.subjectFingerprint = fingerprint(login.claims.sub);
+            entry.verifiedAt = login.verifiedAt;
+            entry.permissions = current.scopes.filter(x => x.startsWith('ciam:'));
+          }
+        } catch { unavailable = true; }
+      }
+      status[key] = entry;
+    }
+    if (unavailable) return reply(res, 503, { identitySource: 'WSO2_UNAVAILABLE',
+      authenticated: false, operator: false, error: 'wso2_authority_unavailable' });
+    return reply(res, 200, { identitySource: Object.values(status).some(x => x.authenticated) ?
+      'WSO2_ID_TOKEN_AND_LIVE_ACCESS_TOKEN' : 'NO_VERIFIED_IDENTITY',
+      authenticated: Object.values(status).some(x => x.authenticated),
+      clients: status, operator: false, csrf: s.csrf,
+      capabilities: { b2bAdministration: false, crossTenantSso: false,
+        federation: false, wso2RpLogoutVerified: false, delegatedAuthorizationVerified: false },
+      evidence: 'LIVE_INTROSPECTION_PER_REQUEST', demoPersonasAreIdentities: false });
+  }
+  // Real, minimal protected API gate. Data here is metadata, not a synthetic user profile.
+  if (wso2Live && u.pathname === '/api/protected/profile') {
+    if (req.method !== 'GET') return reply(res, 405, { error: 'method_not_allowed' });
+    const key = u.searchParams.get('client');
+    if (!Object.hasOwn(clients, key || '')) return reply(res, 400, { error: 'invalid_client' });
+    const decision = await requireAuthorityForClient(s, key, clients,
+      'ciam:profile:read', process.env.WSO2_BUSINESS_API_AUDIENCE);
+    if (decision.http !== 200) return reply(res, decision.http, { error: decision.reason, allowed: false });
+    const login = s.logins[key];
+    return reply(res, 200, { allowed: true, authorizedBy: 'WSO2_ACTIVE_ACCESS_TOKEN_SCOPE',
+      issuer: login.claims.iss, subjectFingerprint: fingerprint(login.claims.sub) });
+  }
+  if (wso2Live && (u.pathname === '/api/scenarios' || u.pathname === '/api/session' ||
+      u.pathname === '/api/subjects/compare' || u.pathname === '/api/consent' ||
+      u.pathname === '/api/consent/check' || u.pathname.startsWith('/api/identity/consent/') ||
+      u.pathname === '/api/m2m/client-credentials' || u.pathname === '/api/logout' ||
+      /^\/api\/(experience|retail)(\/|$)/.test(u.pathname))) {
+    return reply(res, 503, { error: 'wso2_authoritative_integration_not_available',
+      allowed: false, syntheticFallback: false });
+  }
   if (u.pathname === '/api/identity/me' && req.method === 'GET') {
     const entries = Object.fromEntries(Object.entries(clients).map(([key, c]) => {
       const login = s.logins[key];
@@ -226,9 +282,27 @@ async function handle(req, res) {
       const c = clients[key], doc = await discover(c.issuer);
       const tokens = await exchangeAuthorizationCode(doc, { clientId: c.clientId, clientSecret: c.clientSecret, redirectUri: callbackUrl(key), code, verifier: p.verifier });
       const claims = await verifyIdToken(tokens.id_token, { issuer: c.issuer, clientId: c.clientId, nonce: p.nonce });
-      s.logins[key] = { claims, verified: true, verifiedAt: new Date().toISOString(), sector: actualSectorUri(c.brand) };
+      if (wso2Live && (typeof tokens.access_token !== 'string' || !tokens.access_token))
+         return reply(res, 502, { error: 'wso2_access_token_missing' });
+       s.logins[key] = { claims, verified: true, accessToken: tokens.access_token, verifiedAt: new Date().toISOString(), sector: actualSectorUri(c.brand) };
       sessionStore.rotate(s, res);
       return redirect(res, `/?client=${encodeURIComponent(key)}&authenticated=1`);
+    }
+    // Strict live mode never renders fixture-backed Experience Center pages.
+    if (wso2Live) {
+      if (u.pathname === '/live-wso2-ui.js') {
+        const file = await readFile(join(dirname(fileURLToPath(import.meta.url)), 'live-wso2-ui.js'));
+        res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8',
+          'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+        res.end(file); return;
+      }
+      if (!['/', '/app/', '/app/index.html'].includes(u.pathname))
+        return reply(res, 404, { error: 'live_wso2_no_fixture_route' });
+      const html = await readFile(join(dirname(fileURLToPath(import.meta.url)), 'live-wso2.html'));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'" });
+      res.end(html); return;
     }
     if (await serveBuiltApp(u.pathname, res)) return;
     if (u.pathname === '/') return redirect(res, '/app/');
