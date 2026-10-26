@@ -180,7 +180,7 @@ def main():
     if command=='help':
         output({'commands':['fresh','bootstrap','status','bff-diagnose','bff-start','bff-clear-stale','test',
                            'authority-preflight','authority-evidence','authorization-plan','authorization-apply','authorization-reconcile',
-                           'consent-verify','consent-plan','consent-apply','authority-status','runtime-acceptance'],
+                           'consent-verify','consent-plan','consent-apply','authority-status','runtime-acceptance','bff-runtime-plan','bff-restart'],
                 'writeConfirmation':{'authorization-apply':'WSO2_CIAM_V10_AUTHORITY_CONFIRM=AUTHORIZE_EXISTING_V10_OIDC_AND_ASSIGN_SCIM_USERS'},
                 'safety':'Consent apply refuses until feature and API contract verified'})
     elif command=='fresh':prepare()
@@ -199,6 +199,9 @@ def main():
     elif command=='runtime-acceptance':
         root_guard()
         run([sys.executable,HERE/'authority/acceptance.py'])
+    elif command in ('bff-runtime-plan','bff-restart'):
+        root_guard()
+        run([sys.executable,HERE/'bff/restart.py',command])
     elif command=='bff-diagnose':bff_diagnose()
     elif command=='bff-start':
         repo_guard();root_guard()
@@ -220,10 +223,10 @@ def main():
         (PRIVATE/'bff-v10.pid').unlink()
         output({'stage':'DEAD_V10_BFF_PID_REMOVED','remoteWrites':0})
     elif command=='test':
-        for d in ('server','tenants','resources','oidc','authority'):
+        for d in ('server','tenants','resources','oidc','authority','bff'):
             run([sys.executable,'-m','unittest','discover','-s',HERE/d/'tests','-v'],cwd=REPO)
         output({'stage':'CIAM_V10_OFFLINE_TESTS_PASSED'})
-    else:raise Stop('UNKNOWN_COMMAND: help fresh bootstrap status bff-diagnose bff-start bff-clear-stale test authority-preflight authority-evidence authorization-plan authorization-apply authorization-reconcile consent-verify consent-plan consent-apply authority-status runtime-acceptance')
+    else:raise Stop('UNKNOWN_COMMAND: help fresh bootstrap status bff-diagnose bff-start bff-clear-stale test authority-preflight authority-evidence authorization-plan authorization-apply authorization-reconcile consent-verify consent-plan consent-apply authority-status runtime-acceptance bff-runtime-plan bff-restart')
 
 if __name__=='__main__':
     try:main()

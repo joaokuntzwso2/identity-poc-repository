@@ -37,7 +37,11 @@ def run():
         try:
             code,body=request(path)
             if key=='anonymousIdentity':
-                ok=code==200 and body.get('authenticated') is False
+                ok=(code==200 and body.get('authenticated') is False
+                    and body.get('evidence')=='LIVE_INTROSPECTION_PER_REQUEST')
+                output['runtimeEvidence']=body.get('evidence') if body.get('evidence') in (
+                    'LIVE_INTROSPECTION_PER_REQUEST','BROWSER_CALLBACK_REQUIRED',
+                    'BFF_VALIDATED_SIGNED_ID_TOKEN') else 'UNRECOGNIZED'
             elif key.endswith('WithoutSession'):
                 ok=code==401 and body.get('allowed') is not True
             else:
