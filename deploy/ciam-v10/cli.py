@@ -15,6 +15,7 @@ import time
 import urllib.error
 import urllib.request
 import secrets
+import automation
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
@@ -133,17 +134,36 @@ def wait_bff(seconds=25):
 
 def bootstrap_all():
     repo_guard();root_guard()
-    if os.environ.get('WSO2_CIAM_V10_DEPLOY_CONFIRM') != 'BOOTSTRAP_RECORDED_LAB_RESOURCES':
-        raise Stop('EXPLICIT_BOOTSTRAP_CONFIRMATION_REQUIRED')
+    # One operator confirmation covers the complete declared bootstrap; the
+    # deprecated v2 role contract still needs a separate explicit selection.
+    version=automation.verify_intent(os.environ)
+    # Never treat an unknown/stale BFF as ours or silently keep an old scope
+    # manifest running. The fresh path expects port 4400 to be unused.
+    if port_open():
+        raise Stop('BFF_PORT_4400_ALREADY_USED_REFUSE_AUTO_RESTART')
     stages=[(TENANTS,'WSO2_CIAM_V10_CONFIRM','CREATE_TWO_NEW_ROOT_TENANTS'),
             (RESOURCES,'WSO2_CIAM_V10_RESOURCE_CONFIRM','PROVISION_MANAGEMENT_AND_USERS'),
             (OIDC,'WSO2_CIAM_V10_OIDC_CONFIRM','CREATE_FOUR_V10_OIDC_APPS')]
     for script,key,val in stages:
         env=os.environ.copy();env[key]=val
         run([sys.executable,script,'apply'],env=env)
+    auth_report=automation.authorization_pipeline(AUTHORITY,ROOT,os.environ.copy())
+    output(auth_report)
+    # The BFF bridge must run AFTER the authority journal and WSO2 readback;
+    # only then can it request the real ciam:profile:read scope.
     run([sys.executable,OIDC,'bridge-bff','--repo',REPO])
-    output({'stage':'RESOURCE_BOOTSTRAP_COMPLETED','resourceStages':'VERIFIED',
-            'bff':'PRIVATE_MANIFEST_PREPARED', 'browserAuthentication':'NOT_VERIFIED'})
+    run([sys.executable,OIDC,'start-bff','--repo',REPO])
+    wait_bff()
+    negative=automation.negative_runtime_acceptance(
+        HERE/'authority/acceptance.py',ROOT,os.environ.copy())
+    # Consent v2 is unavailable on the public GA WSO2 7.3 image.
+    # Report the blocker without running consent-apply or creating a ledger.
+    consent=automation.consent_capability(AUTHORITY,ROOT,os.environ.copy())
+    output({'stage':'CIAM_V10_BOOTSTRAP_AUTOMATED','authorization':'READBACK_VERIFIED',
+            'roleApiVersion':version,'bffNegativeTests':negative['status'],
+            'consent':consent,'browserAuthentication':'NOT_VERIFIED_LIVE',
+            'positiveBusinessAuthorization':'NOT_VERIFIED_LIVE',
+            'permissionRevocation':'NOT_VERIFIED_LIVE'})
 
 def prepare():
     # Fresh new runtime only. Never reset or adopt existing state implicitly.
@@ -178,12 +198,19 @@ def main():
     if len(sys.argv)!=2:raise Stop('USAGE: scripts/ciam-v10.sh COMMAND')
     command=sys.argv[1]
     if command=='help':
-        output({'commands':['fresh','bootstrap','status','bff-diagnose','bff-start','bff-clear-stale','test',
+        output({'commands':['fresh','fresh-bootstrap','bootstrap','status','bff-diagnose','bff-start','bff-clear-stale','test',
                            'authority-preflight','authority-evidence','authorization-plan','authorization-apply','authorization-reconcile',
                            'consent-verify','consent-plan','consent-apply','authority-status','runtime-acceptance','bff-runtime-plan','bff-restart'],
                 'writeConfirmation':{'authorization-apply':'WSO2_CIAM_V10_AUTHORITY_CONFIRM=AUTHORIZE_EXISTING_V10_OIDC_AND_ASSIGN_SCIM_USERS'},
                 'safety':'Consent apply refuses until feature and API contract verified'})
     elif command=='fresh':prepare()
+    elif command=='fresh-bootstrap':
+        repo_guard()
+        automation.verify_intent(os.environ, fresh=True)
+        automation.fresh_destination_preflight(ROOT)
+        prepare()
+        automation.wait_for_https()
+        bootstrap_all()
     elif command=='bootstrap':bootstrap_all()
     elif command=='status':
         root_guard()
@@ -225,8 +252,9 @@ def main():
     elif command=='test':
         for d in ('server','tenants','resources','oidc','authority','bff'):
             run([sys.executable,'-m','unittest','discover','-s',HERE/d/'tests','-v'],cwd=REPO)
+        run([sys.executable,'-m','unittest','discover','-s',HERE/'automation_tests','-v'],cwd=REPO)
         output({'stage':'CIAM_V10_OFFLINE_TESTS_PASSED'})
-    else:raise Stop('UNKNOWN_COMMAND: help fresh bootstrap status bff-diagnose bff-start bff-clear-stale test authority-preflight authority-evidence authorization-plan authorization-apply authorization-reconcile consent-verify consent-plan consent-apply authority-status runtime-acceptance bff-runtime-plan bff-restart')
+    else:raise Stop('UNKNOWN_COMMAND: help fresh fresh-bootstrap bootstrap status bff-diagnose bff-start bff-clear-stale test authority-preflight authority-evidence authorization-plan authorization-apply authorization-reconcile consent-verify consent-plan consent-apply authority-status runtime-acceptance bff-runtime-plan bff-restart')
 
 if __name__=='__main__':
     try:main()

@@ -164,6 +164,8 @@ def check_app(client,brand,channel,token,node):
     app=require(client.call('GET',root,auth=token),200,'APP_READBACK_'+brand+'_'+channel)
     if app.get('id')!=appid or app.get('name')!=node['name'] or app.get('description')!=node['description'] or app.get('isManagementApp') is not False:
         raise Refuse('APP_REMOTE_IDENTITY_MISMATCH_'+brand+'_'+channel)
+    if app.get('associatedRoles',{}).get('allowedAudience')!='APPLICATION':
+        raise Refuse('OIDC_APPLICATION_ROLE_AUDIENCE_NOT_VERIFIED_'+brand+'_'+channel)
     protocol=require(client.call('GET',root+'/inbound-protocols/oidc',auth=token),200,'OIDC_READBACK_'+brand+'_'+channel)
     if not isinstance(protocol.get('clientId'),str) or not protocol.get('clientId') or not isinstance(protocol.get('clientSecret'),str) or not protocol.get('clientSecret'):
         raise Refuse('OIDC_CREDENTIALS_NOT_EXPOSED_'+brand+'_'+channel)
@@ -254,6 +256,7 @@ def run(client,ts,rs,s,mode,save):
                 node['state']='create-started';save()
                 payload={'name':name,'description':node['description'], 'isManagementApp':False,
                          'accessUrl':BFF_ORIGIN+'/',
+                         'associatedRoles':{'allowedAudience':'APPLICATION','roles':[]},
                          'inboundProtocolConfiguration':{'oidc':{
                             'grantTypes':['authorization_code','refresh_token'],
                             'publicClient':False,
