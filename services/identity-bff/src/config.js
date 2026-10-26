@@ -1,10 +1,11 @@
+import { loadPrivateWso2Clients } from './wso2-private.js';
 /** Four independent client registrations. Values must be supplied by a real WSO2 deployment. */
 export const brands = Object.freeze({
   aurora: { name: 'Aurora', color: '#EF6B53', sectorKey: 'aurora' },
   brisa: { name: 'Brisa', color: '#5B6EEA', sectorKey: 'brisa' },
 });
 
-export const clients = Object.freeze(Object.fromEntries(
+const environmentClients = Object.freeze(Object.fromEntries(
   Object.keys(brands).flatMap(brand => ['web', 'app'].map(channel => {
     const name = `${brand}-${channel}`;
     const envKey = name.toUpperCase().replace(/-/g, '_');
@@ -18,6 +19,7 @@ export const clients = Object.freeze(Object.fromEntries(
   }))
 ));
 
+export const clients = Object.freeze(loadPrivateWso2Clients({ fallback: environmentClients }));
 export const appConfig = Object.freeze({
   origin: process.env.PUBLIC_ORIGIN || 'http://localhost:4000',
   port: Number(process.env.PORT || 4000),

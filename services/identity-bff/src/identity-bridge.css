@@ -1,0 +1,5 @@
+#identity-bff-bridge {position:relative;z-index:2147483000;box-sizing:border-box;padding:10px 18px;background:#13273b;color:#f5faff;font:13px/1.5 system-ui,sans-serif;display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;border-bottom:2px solid #4eb6aa}
+#identity-bff-bridge strong {font-size:14px}
+#identity-bff-bridge nav {display:flex;gap:8px;flex-wrap:wrap}
+#identity-bff-bridge a,#identity-bff-bridge button {border:1px solid #9ed1d2;border-radius:5px;background:transparent;color:white;padding:4px 8px;text-decoration:none;font:inherit;cursor:pointer}
+#identity-bff-bridge small {flex-basis:100%;opacity:.85}
