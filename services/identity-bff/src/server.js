@@ -134,10 +134,21 @@ const apiHandler = async (req, res, u, s) => {
     return reply(res, 200, { allowed: true, authorizedBy: 'WSO2_ACTIVE_ACCESS_TOKEN_SCOPE',
       issuer: login.claims.iss, subjectFingerprint: fingerprint(login.claims.sub) });
   }
+  // Local session invalidation remains available even during a WSO2 outage.
+  // This does NOT assert WSO2 SSO logout or access-token revocation.
+  if (wso2Live && u.pathname === '/api/logout') {
+    if (req.method !== 'POST') return reply(res, 405, {error:'method_not_allowed'});
+    if (req.headers.origin !== appConfig.origin || !req.headers['x-csrf-token'] ||
+        !safeEqual(req.headers['x-csrf-token'], s.csrf))
+      return reply(res, 403, {error:'csrf_or_origin_denied'});
+    sessionStore.destroy(s, res);
+    return reply(res, 200, { status:'BFF_SESSION_DESTROYED',
+      wso2Session:'NOT_TERMINATED', accessTokenRevocation:'NOT_VERIFIED' });
+  }
   if (wso2Live && (u.pathname === '/api/scenarios' || u.pathname === '/api/session' ||
       u.pathname === '/api/subjects/compare' || u.pathname === '/api/consent' ||
       u.pathname === '/api/consent/check' || u.pathname.startsWith('/api/identity/consent/') ||
-      u.pathname === '/api/m2m/client-credentials' || u.pathname === '/api/logout' ||
+      u.pathname === '/api/m2m/client-credentials' ||
       /^\/api\/(experience|retail)(\/|$)/.test(u.pathname))) {
     return reply(res, 503, { error: 'wso2_authoritative_integration_not_available',
       allowed: false, syntheticFallback: false });

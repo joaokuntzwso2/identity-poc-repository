@@ -22,6 +22,7 @@ ROOT = Path(os.environ.get('CIAM_V10_HOME', str(Path.home() / 'wso2-ciam-v10')))
 PRIVATE = ROOT / 'private'
 OIDC = HERE / 'oidc/bootstrap.py'
 RESOURCES = HERE / 'resources/bootstrap.py'
+AUTHORITY = HERE / 'authority/bootstrap.py'
 TENANTS = HERE / 'tenants/provision.py'
 PROJECT = 'wso2-ciam-v10'
 
@@ -176,7 +177,13 @@ def prepare():
 def main():
     if len(sys.argv)!=2:raise Stop('USAGE: scripts/ciam-v10.sh COMMAND')
     command=sys.argv[1]
-    if command=='fresh':prepare()
+    if command=='help':
+        output({'commands':['fresh','bootstrap','status','bff-diagnose','bff-start','bff-clear-stale','test',
+                           'authority-preflight','authority-evidence','authorization-plan','authorization-apply','authorization-reconcile',
+                           'consent-verify','consent-plan','consent-apply','authority-status','runtime-acceptance'],
+                'writeConfirmation':{'authorization-apply':'WSO2_CIAM_V10_AUTHORITY_CONFIRM=AUTHORIZE_EXISTING_V10_OIDC_AND_ASSIGN_SCIM_USERS'},
+                'safety':'Consent apply refuses until feature and API contract verified'})
+    elif command=='fresh':prepare()
     elif command=='bootstrap':bootstrap_all()
     elif command=='status':
         root_guard()
@@ -184,6 +191,14 @@ def main():
             print('STAGE_'+stage.upper())
             run([sys.executable,script,'status'])
         bff_diagnose()
+    elif command in ('authority-preflight','authority-evidence','authorization-plan','authorization-apply',
+                     'authorization-reconcile','consent-verify','consent-plan',
+                     'consent-apply','authority-status'):
+        repo_guard();root_guard()
+        run([sys.executable,AUTHORITY,command])
+    elif command=='runtime-acceptance':
+        root_guard()
+        run([sys.executable,HERE/'authority/acceptance.py'])
     elif command=='bff-diagnose':bff_diagnose()
     elif command=='bff-start':
         repo_guard();root_guard()
@@ -205,10 +220,10 @@ def main():
         (PRIVATE/'bff-v10.pid').unlink()
         output({'stage':'DEAD_V10_BFF_PID_REMOVED','remoteWrites':0})
     elif command=='test':
-        for d in ('server','tenants','resources','oidc'):
+        for d in ('server','tenants','resources','oidc','authority'):
             run([sys.executable,'-m','unittest','discover','-s',HERE/d/'tests','-v'],cwd=REPO)
         output({'stage':'CIAM_V10_OFFLINE_TESTS_PASSED'})
-    else:raise Stop('UNKNOWN_COMMAND: fresh bootstrap status bff-diagnose bff-start bff-clear-stale test')
+    else:raise Stop('UNKNOWN_COMMAND: help fresh bootstrap status bff-diagnose bff-start bff-clear-stale test authority-preflight authority-evidence authorization-plan authorization-apply authorization-reconcile consent-verify consent-plan consent-apply authority-status runtime-acceptance')
 
 if __name__=='__main__':
     try:main()

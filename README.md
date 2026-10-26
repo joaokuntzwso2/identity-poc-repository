@@ -1,5 +1,7 @@
 # Identity Experience Center
 
+> **Isolated v10 WSO2 status:** A separate 9444/4400 deployment exists. The historical preview descriptions below do not describe its current live integration. See [WSO2 v10 P0 corrective runbook](docs/WSO2_CIAM_V10_P0_CORRECTION.md). Never equate the preview with a WSO2 authorization/consent decision.
+
 <!-- CIAM_V10_REVIEW_V2 -->
 
 Explore fictional customer-identity journeys across Aurora and Brisa. The repository now includes an **isolated, automated WSO2 Identity Server 7.3 lab (v10)** alongside the existing synthetic Experience Center. The lab uses persistent PostgreSQL, tenant-scoped provisioning, two non-admin CIAM users, four OIDC registrations and a Node Identity BFF. They are **not** equivalent to a finished production CIAM implementation.

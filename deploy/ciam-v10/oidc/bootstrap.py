@@ -359,6 +359,23 @@ def start_bff(s,repo):
                 'ALLOW_INSECURE_LOCAL':'true','BIND_HOST':'127.0.0.1',
                 'WSO2_BFF_PRIVATE_MANIFEST':str(repo/'var/wso2/identity-bff-v10.private.json'),
                 'NODE_EXTRA_CA_CERTS':str(CERT),'NODE_ENV':'development'})
+    # Read-only bridge of the separately verified authority journal. No client
+    # registration, rotation, or mutation of either existing private journal.
+    authority_file=PRIVATE/'bootstrap-authority-v10.private.json'
+    if authority_file.exists() or authority_file.is_symlink():
+        authority=read_private(authority_file)
+        if (authority.get('schema')=='identity.wso2.ciam.v10.authority.v1'
+            and authority.get('base')==BASE
+            and authority.get('apiIdentifier')=='https://api.ciam-v10.test/profile'
+            and authority.get('scope')=='ciam:profile:read'
+            and authority.get('acceptance')=='API_ROLES_AND_ASSIGNMENTS_READBACK_VERIFIED_BROWSERS_NOT_TESTED'
+            and all(authority.get('tenants',{}).get(b,{}).get('apps',{}).get(c) == s['tenants'][b]['clients'][c]['id']
+                    and authority['tenants'][b].get('resource',{}).get('state')=='verified'
+                    and authority['tenants'][b].get('authorizations',{}).get(c,{}).get('state')=='verified'
+                    and authority['tenants'][b].get('role_'+c,{}).get('state')=='verified'
+                    for b in DOMAINS for c in CHANNELS)):
+            env['WSO2_AUTHORITY_OIDC_SCOPE']='ciam:profile:read'
+            env['WSO2_BUSINESS_API_AUDIENCE']=authority['apiIdentifier']
     logfile=PRIVATE/'bff-v10.log';pidfile=PRIVATE/'bff-v10.pid'
     if pidfile.exists() or pidfile.is_symlink():raise Refuse('PIDFILE_EXISTS_REFUSED')
     fd=os.open(logfile,os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)

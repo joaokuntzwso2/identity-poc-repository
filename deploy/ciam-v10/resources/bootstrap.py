@@ -2,6 +2,7 @@
 """WSO2 IS 7.3 local v10: journaled, tenant-qualified API provisioning.
 
 Stage: 2 management M2M clients, scopes for Application API and SCIM2 Users,
+Follow-on additive business API/role bootstrap: ../authority/bootstrap.py;
 2 non-admin SCIM users. No OIDC callback, browser-login, or SSO claim.
 """
 import base64

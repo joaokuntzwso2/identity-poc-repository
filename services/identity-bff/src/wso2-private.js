@@ -209,7 +209,11 @@ export function validatePrivateClients(manifest, { origin = 'http://127.0.0.1:40
     if (issuers[brand] && issuers[brand] !== issuer)
       throw new Error(`WSO2_PRIVATE_BRAND_ISSUERS_DIFFER_${brand}`);
     issuers[brand] = issuer;
-    result[key] = Object.freeze({ name: key, brand, channel, clientId, clientSecret, issuer, scope: 'openid', redirectUri });
+    // Requesting a scope never grants it; WSO2 still decides at token issuance.
+    // The v10 bootstrap enables this only after readback-verified API and roles.
+    const profileScope = process.env.WSO2_AUTHORITY_OIDC_SCOPE === 'ciam:profile:read'
+      ? 'openid ciam:profile:read' : 'openid';
+    result[key] = Object.freeze({ name: key, brand, channel, clientId, clientSecret, issuer, scope: profileScope, redirectUri });
   }
   if (issuers.aurora === issuers.brisa) throw new Error('WSO2_PRIVATE_TENANT_ISSUERS_IDENTICAL');
   return Object.freeze(result);
