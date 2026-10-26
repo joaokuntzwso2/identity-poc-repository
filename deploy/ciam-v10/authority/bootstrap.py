@@ -32,6 +32,17 @@ API_SCOPE = 'ciam:profile:read'
 API_NAME = 'CIAM v10 Profile API'
 CONFIRM = 'AUTHORIZE_EXISTING_V10_OIDC_AND_ASSIGN_SCIM_USERS'
 ROLE_SCHEMA = 'urn:ietf:params:scim:schemas:extension:2.0:Role'
+ROLE_API_ENV = 'WSO2_CIAM_V10_ROLE_API'
+ROLE_V2_CONFIRM_ENV = 'WSO2_CIAM_V10_ROLE_V2_CONFIRM'
+ROLE_V2_CONFIRM = 'USE_DEPRECATED_ROLE_V2_FOR_NEW_CIAM_V10_ROLES'
+
+def role_api_version():
+    # Do not silently downgrade: the operator must select a pinned API contract.
+    version = os.environ.get(ROLE_API_ENV, 'v3')
+    if version not in ('v2', 'v3'):
+        raise Refuse('ROLE_API_VERSION_MUST_BE_EXPLICIT_V2_OR_V3')
+    return version
+
 Refuse = resources.Refuse
 ID = resources.ID
 
@@ -71,6 +82,7 @@ def private_context():
 def new_journal(tenants, oidc):
     return {'schema': 'identity.wso2.ciam.v10.authority.v1', 'base': resources.BASE,
             'apiIdentifier': API_IDENTIFIER, 'scope': API_SCOPE,
+            'roleApiVersion': role_api_version(),
             'tenants': {b: {'domain': d, 'tenantId': tenants['tenants'][b]['tenantId'],
                             'apps': {c: oidc['tenants'][b]['clients'][c]['id'] for c in ('web','app')}}
                         for b,d in DOMAINS.items()},
@@ -79,7 +91,12 @@ def new_journal(tenants, oidc):
 
 def read_journal(tenants, oidc):
     expected = new_journal(tenants, oidc)
-    result = resources.private_read(JOURNAL, False) or expected
+    stored = resources.private_read(JOURNAL, False)
+    result = stored if stored is not None else expected
+    # A legacy authority journal was created for v3, even if the last v3
+    # operation was a failed GET. Never silently reinterpret it as v2.
+    if stored is not None and stored.get('roleApiVersion', 'v3') != expected['roleApiVersion']:
+        raise Refuse('ROLE_API_VERSION_JOURNAL_PIN_MISMATCH_NO_AUTOMATIC_MIGRATION')
     for k in ('schema', 'base', 'apiIdentifier', 'scope'):
         if result.get(k) != expected[k]: raise Refuse('AUTHORITY_JOURNAL_CONTEXT_DRIFT_'+k)
     for brand in DOMAINS:
@@ -96,12 +113,15 @@ def tenant_auth(tenants, brand):
 
 def get(client, path, auth):
     response = client.call('GET', path, auth=auth)
-    if response[0] != 200: raise Refuse('READ_FAILED_HTTP_'+str(response[0])+'_'+('ROLES_V3' if '/v3/Roles' in path else 'AUTHORITY'))
+    if response[0] != 200:
+        role_tag = ('ROLES_V2' if '/v2/Roles' in path else
+                    'ROLES_V3' if '/v3/Roles' in path else 'AUTHORITY')
+        raise Refuse('READ_FAILED_HTTP_'+str(response[0])+'_'+role_tag)
     return response[1]
 
 
 def role_path(brand):
-    return '/t/' + DOMAINS[brand] + '/scim2/v3/Roles'
+    return '/t/' + DOMAINS[brand] + '/scim2/' + role_api_version() + '/Roles'
 
 
 def api_path(brand):
@@ -184,7 +204,8 @@ def role_readback(client, brand, auth, role_id, app_id, user_id, channel):
 
 
 def plan(client, tenants, rs, oidc, journal):
-    result={'stage':'CIAM_V10_AUTHORITY','mode':'GET_ONLY','remoteWrites':0,'tenants':{},'safeToApply':True}
+    result={'stage':'CIAM_V10_AUTHORITY','mode':'GET_ONLY','remoteWrites':0,
+            'roleApiVersion':role_api_version(),'tenants':{},'safeToApply':True}
     for brand in DOMAINS:
         auth=tenant_auth(tenants,brand)
         resource=exact_catalog(client,brand,auth)
@@ -206,6 +227,12 @@ def plan(client, tenants, rs, oidc, journal):
             app=get(client,app_path(brand,app_id),auth)
             if app.get('id')!=app_id or app.get('name')!=oidc['tenants'][brand]['clients'][channel]['name']:
                 raise Refuse('OIDC_APP_REMOTE_DRIFT')
+            # WSO2 only makes application-audience roles effective for applications
+            # configured to consume application roles. A successful GET and valid
+            # app ID do not prove this. Never try to change audience implicitly:
+            # switching from organization audience can discard assigned app roles.
+            if app.get('associatedRoles',{}).get('allowedAudience') != 'APPLICATION':
+                raise Refuse('OIDC_APP_ROLE_AUDIENCE_NOT_VERIFIED_APPLICATION_'+brand+'_'+channel)
             auths=resources.auth_list(client,brand,auth,app_id)
             authorized='ABSENT'
             if resource:
@@ -266,10 +293,14 @@ def guarded_create(client, journal, tenant_node, key, payload, path, auth, save,
 def apply(client, tenants, rs, oidc, journal, save):
     if os.environ.get('WSO2_CIAM_V10_AUTHORITY_CONFIRM') != CONFIRM:
         raise Refuse('EXPLICIT_AUTHORITY_WRITE_CONFIRMATION_REQUIRED')
+    if (role_api_version() == 'v2' and
+        os.environ.get(ROLE_V2_CONFIRM_ENV) != ROLE_V2_CONFIRM):
+        raise Refuse('EXPLICIT_DEPRECATED_V2_ROLE_API_WRITE_CONFIRMATION_REQUIRED')
     # All tenants must pass GET preflight before any mutation.
     inventory=plan(client,tenants,rs,oidc,journal)
     if not inventory['safeToApply']:raise Refuse('READ_ONLY_PRECHECK_NOT_SAFE_FOR_WRITES')
-    result={'stage':'CIAM_V10_AUTHORITY','mode':'APPLY','tenants':{},'status':'NOT_YET_VERIFIED'}
+    result={'stage':'CIAM_V10_AUTHORITY','mode':'APPLY','tenants':{},
+            'roleApiVersion':role_api_version(),'status':'NOT_YET_VERIFIED'}
     for brand in DOMAINS:
         auth=tenant_auth(tenants,brand)
         own=journal['tenants'][brand]
@@ -333,7 +364,7 @@ def diagnostic(client, tenants, rs, oidc):
         auth=tenant_auth(tenants,brand)
         bare=resources.basic(resources.OWNER,owner['password'])
         paths={'apiResources':api_path(brand)+'?limit=1',
-               'rolesV3':role_path(brand)+'?count=1&startIndex=1',
+               'rolesV3':'/t/'+domain+'/scim2/v3/Roles?count=1&startIndex=1',
                'rolesV2':'/t/'+domain+'/scim2/v2/Roles?count=1&startIndex=1',
                'consentV2':'/t/'+domain+'/api/identity/consent-mgt/v2.0/purposes?limit=1'}
         out={}
@@ -409,6 +440,7 @@ def consent_status(client,tenants):
 
 def status(journal):
     return {'stage':'CIAM_V10_AUTHORITY_STATUS','remoteWrites':0,
+            'roleApiVersion':journal.get('roleApiVersion','v3'),
             'acceptance':journal.get('acceptance','NOT_VERIFIED'),
             'tenants':{b:{'resource':journal['tenants'][b].get('resource',{}).get('state','NOT_STARTED'),
                           'authorizedChannels':{c:journal['tenants'][b].get('authorizations',{}).get(c,{}).get('state','NOT_STARTED') for c in ('web','app')},

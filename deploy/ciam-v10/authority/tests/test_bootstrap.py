@@ -32,6 +32,7 @@ class Fake:
         self.ts=ts;self.rs=rs;self.oidc=oidc
         self.calls=[];self.api={};self.auths={};self.roles={}
         self.failed=None;self.deny_roles=False
+        self.app_audience='APPLICATION'
     def call(self,method,path,*,auth,data=None,form=None):
         self.calls.append((method,path))
         brand=next((b for b,d in a.DOMAINS.items() if path.startswith('/t/'+d+'/')),None)
@@ -60,9 +61,11 @@ class Fake:
                     self.auths[(brand,appid)]=[{'id':data['id'],'authorizedScopes':data['scopes']}]
                     return (201,{},None)
                 return (200,{'authorizedAPIs':self.auths.get((brand,appid),[])},None)
-            return (200,{'id':appid,'name':app['name']},None)
-        if rel.startswith('/scim2/v3/Roles'):
-            if self.deny_roles:return (401,{},None)
+            return (200,{'id':appid,'name':app['name'],
+                          'associatedRoles':{'allowedAudience':self.app_audience}},None)
+        if rel.startswith('/scim2/v3/Roles') or rel.startswith('/scim2/v2/Roles'):
+            if self.deny_roles and rel.startswith('/scim2/v3/Roles'):
+                return (401,{},None)
             if method=='POST':
                 role={'id':'role-'+brand+'-'+data['displayName'].split()[-1],**data}
                 self.roles[(brand,data['displayName'])]=role
@@ -149,5 +152,94 @@ class SecurityTests(unittest.TestCase):
         with self.assertRaisesRegex(a.Refuse,'PERMISSIONS_OR_USERS'):
             a.role_readback(f,'aurora',a.tenant_auth(ts,'aurora'),'role-aurora-WEB',
                             'aurora-web-appid','user-aurora-id','web')
+
+    def test_no_writes_if_application_role_audience_is_organization(self):
+        ts,rs,oidc,j,f=self.make()
+        f.app_audience='ORGANIZATION'
+        with patch.dict(os.environ,{a.ROLE_API_ENV:'v2',
+                        a.ROLE_V2_CONFIRM_ENV:a.ROLE_V2_CONFIRM,
+                        'WSO2_CIAM_V10_AUTHORITY_CONFIRM':a.CONFIRM}):
+            with self.assertRaisesRegex(a.Refuse,'ROLE_AUDIENCE_NOT_VERIFIED_APPLICATION'):
+                a.apply(f,ts,rs,oidc,j,lambda:None)
+        self.assertTrue(all(method=='GET' for method,_ in f.calls))
+
+    def test_no_writes_if_application_role_audience_is_omitted(self):
+        ts,rs,oidc,j,f=self.make()
+        f.app_audience=None
+        with patch.dict(os.environ,{a.ROLE_API_ENV:'v2',
+                        a.ROLE_V2_CONFIRM_ENV:a.ROLE_V2_CONFIRM,
+                        'WSO2_CIAM_V10_AUTHORITY_CONFIRM':a.CONFIRM}):
+            with self.assertRaisesRegex(a.Refuse,'ROLE_AUDIENCE_NOT_VERIFIED_APPLICATION'):
+                a.apply(f,ts,rs,oidc,j,lambda:None)
+        self.assertTrue(all(method=='GET' for method,_ in f.calls))
+
+    def test_v2_plan_is_explicit_and_get_only(self):
+        ts,rs,oidc,j,f=self.make();f.deny_roles=True
+        with self.assertRaisesRegex(a.Refuse,'ROLES_V3'):
+            a.plan(f,ts,rs,oidc,j)
+        f.calls.clear()
+        with patch.dict(os.environ,{a.ROLE_API_ENV:'v2'}):
+            result=a.plan(f,ts,rs,oidc,j)
+        self.assertEqual(result['roleApiVersion'],'v2')
+        self.assertTrue(result['safeToApply'])
+        self.assertTrue(all(method=='GET' for method,path in f.calls))
+        self.assertTrue(any('/scim2/v2/Roles' in path for method,path in f.calls))
+        self.assertFalse(any('/scim2/v3/Roles' in path for method,path in f.calls))
+
+    def test_v2_apply_requires_extra_confirmation(self):
+        ts,rs,oidc,j,f=self.make()
+        with patch.dict(os.environ,{a.ROLE_API_ENV:'v2',
+                        'WSO2_CIAM_V10_AUTHORITY_CONFIRM':a.CONFIRM}):
+            with self.assertRaisesRegex(a.Refuse,'DEPRECATED_V2_ROLE_API'):
+                a.apply(f,ts,rs,oidc,j,lambda:None)
+        self.assertEqual(f.calls,[])
+
+    def test_v2_apply_readback_idempotence(self):
+        ts,rs,oidc,_,f=self.make()
+        with patch.dict(os.environ,{a.ROLE_API_ENV:'v2',
+                        a.ROLE_V2_CONFIRM_ENV:a.ROLE_V2_CONFIRM,
+                        'WSO2_CIAM_V10_AUTHORITY_CONFIRM':a.CONFIRM}):
+            j=a.new_journal(ts,oidc)
+            self.assertEqual(j['roleApiVersion'],'v2')
+            result=a.apply(f,ts,rs,oidc,j,lambda:None)
+            self.assertEqual(result['status'],'PROVISIONING_READBACK_VERIFIED_BROWSER_NOT_TESTED')
+            posts=sum(m=='POST' for m,p in f.calls)
+            self.assertEqual(posts,10)
+            a.apply(f,ts,rs,oidc,j,lambda:None)
+            self.assertEqual(posts,sum(m=='POST' for m,p in f.calls))
+            self.assertTrue(all('/scim2/v3/Roles' not in p for m,p in f.calls))
+
+    def test_journal_pin_blocks_version_switch_in_both_directions(self):
+        ts,rs,oidc,legacy,f=self.make()
+        # Legacy journals have an implicit v3 pin; never mutate them into v2.
+        legacy.pop('roleApiVersion',None)
+        with patch.object(a.resources,'private_read',return_value=legacy):
+            with patch.dict(os.environ,{a.ROLE_API_ENV:'v2'}):
+                with self.assertRaisesRegex(a.Refuse,'PIN_MISMATCH'):
+                    a.read_journal(ts,oidc)
+        with patch.dict(os.environ,{a.ROLE_API_ENV:'v2'}):
+            v2=a.new_journal(ts,oidc)
+        with patch.object(a.resources,'private_read',return_value=v2):
+            with self.assertRaisesRegex(a.Refuse,'PIN_MISMATCH'):
+                a.read_journal(ts,oidc)
+        self.assertEqual(f.calls,[])
+
+    def test_invalid_api_version_refused(self):
+        with patch.dict(os.environ,{a.ROLE_API_ENV:'v1'}):
+            with self.assertRaisesRegex(a.Refuse,'VERSION_MUST_BE'):
+                a.role_path('aurora')
+
+    def test_diagnostic_labels_remain_truthful_for_v2_selection(self):
+        ts,rs,oidc,j,f=self.make()
+        class Probe:
+            def call(self,method,path,*,auth):
+                if '/v3/Roles' in path:return (401,{},None)
+                if '/v2/Roles' in path:return (200,{},None)
+                return (200,{},None)
+        # API discovery must check both APIs regardless of the selected apply version.
+        with patch.dict(os.environ,{a.ROLE_API_ENV:'v2'}):
+            result=a.diagnostic(Probe(),ts,rs,oidc)
+        self.assertEqual(result['tenantStates']['aurora']['rolesV3']['tenantQualifiedBasic'],401)
+        self.assertEqual(result['tenantStates']['aurora']['rolesV2']['tenantQualifiedBasic'],200)
 
 if __name__=='__main__':unittest.main()
