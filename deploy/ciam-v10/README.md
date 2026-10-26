@@ -60,3 +60,10 @@ The BFF and four OIDC registrations must survive a **real browser authorization-
 - Do not commit anything from `~/wso2-ciam-v10`, `var/wso2`, `.env`, database volumes, extracted SQL files, `*.pem`, `*.log`, or `*.private.json`.
 - `git diff --cached --name-only` and `git diff --cached --check` must be reviewed before committing.
 - Do **not** run the older v8 bootstrap or v9 permission probe against port 9444. The v10 code is the canonical versioned source.
+
+<!-- CIAM_V10_REVIEW_V2 -->
+## Full architecture, failure handling and acceptance
+
+The top-level [end-to-end v10 runbook](../../docs/CIAM_V10_END_TO_END.md) documents the trust boundaries, full bootstrap sequence, port/process ownership, private state, safe-resume rules and the distinction between resource provisioning and browser acceptance. Track missing cases in the [scenario matrix](../../docs/CIAM_V10_SCENARIO_MATRIX.md).
+
+For a same-browser, four-channel signed-login **evidence summary** (not independent cryptographic re-verification), use `python3 scripts/ciam-v10-acceptance.py` with the sanitized `/api/identity/me` JSON piped to standard input. Do not commit or share the JSON; it includes CSRF/session metadata.
