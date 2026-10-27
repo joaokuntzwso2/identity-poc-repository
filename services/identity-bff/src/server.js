@@ -8,6 +8,7 @@ import { appConfig, brands, clients } from './config.js';
 import { evaluatePairwise } from './pairwise.js';
 import { ConsentLedger } from './audit.js';
 import { inspectAccessToken, requireAuthorityForClient } from './wso2-authority.js';
+import { liveApiDenial } from './live-api-policy.js';
 import { handleDurableConsent } from './identity/consent-api.js'; // IDENTITY_CORRECTIONS_V1
 
 const ledger = new ConsentLedger();
@@ -262,6 +263,11 @@ async function serveBuiltApp(pathname, res) {
 
 async function handle(req, res) {
   const u = new URL(req.url, appConfig.origin);
+  // P0 #1: hard-deny unimplemented/synthetic live routes before sessions or handlers.
+  if (wso2Live && u.pathname.startsWith('/api/')) {
+    const denial = liveApiDenial(u.pathname, req.method);
+    if (denial) return reply(res, denial.status, denial.body);
+  }
   // Public, frequently polled endpoints do not allocate anonymous sessions.
   const publicRoutes = new Set(['/api/health', '/api/scenarios', '/api/wso2-status']);
   const isSector = /^\/oidc\/sector\/(aurora|brisa)\.json$/.test(u.pathname);
