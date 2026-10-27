@@ -8,6 +8,7 @@ import secrets
 import stat
 import sys
 import tomllib
+import importlib.util
 
 SECTIONS = ('server','super_admin','database.identity_db','database.shared_db','datasource.AgentIdentity')
 
@@ -53,6 +54,11 @@ def render(stock, pg_password, admin_password):
         out, cnt = re.subn(pattern, lambda _: sections[key] + '\n', out)
         if cnt != 1:
             raise ValueError(f'STOCK_SECTION_NONUNIQUE_{key}')
+    policy_file = Path(__file__).with_name('introspection_policy.py')
+    policy_spec = importlib.util.spec_from_file_location('ciam_v10_introspection_policy', policy_file)
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_spec.loader.exec_module(policy)
+    out = policy.ensure_introspection_policy(out)
     parsed = tomllib.loads(out)
     assert parsed['server']['offset'] == 1
     assert parsed['database']['identity_db']['name'] == 'ciam_identity'

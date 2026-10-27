@@ -45,7 +45,10 @@ export async function inspectAccessToken(login, client, { fetcher = fetch, now =
       !Number.isSafeInteger(data.exp) || data.exp <= now()) return { active: false, scopes: [] };
   const scopes = parseGrantedScopes(data.scope);
   const audiences = typeof data.aud === 'string' ? [data.aud] : Array.isArray(data.aud) ? data.aud : [];
-  if (audience && (!audiences.includes(audience) || audience.length > 20)) return { active: false, scopes: [] };
+  // API resource audiences can be URI identifiers; keep an exact match.
+  if (audience !== null && (typeof audience !== 'string' || audience.length < 1 ||
+      audience.length > 512 || !audiences.includes(audience)))
+    return { active: false, scopes: [] };
   return { active: true, scopes, exp: data.exp };
 }
 

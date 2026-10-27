@@ -122,3 +122,5 @@ See [Security and repository safeguards](docs/PUBLIC_SECURITY.md) and [Provider 
 - **Production architecture:** version and image provenance, external certificates, hardened secrets, backups with tested restores, durable sessions, multi-instance operation and load testing.
 
 This is a public educational identity demonstration. No real customer data, private runtime journals, tokens, passwords or proprietary proposal documents belong in this repository.
+
+See `docs/CIAM_V10_INTROSPECTION_CONFIGURATION.md` for the guarded v10 token-introspection configuration and restart workflow.

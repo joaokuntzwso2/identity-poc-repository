@@ -24,6 +24,7 @@ PRIVATE = ROOT / 'private'
 OIDC = HERE / 'oidc/bootstrap.py'
 RESOURCES = HERE / 'resources/bootstrap.py'
 AUTHORITY = HERE / 'authority/bootstrap.py'
+INTROSPECTION = HERE / 'server/introspection_maintenance.py'
 TENANTS = HERE / 'tenants/provision.py'
 PROJECT = 'wso2-ciam-v10'
 
@@ -200,9 +201,11 @@ def main():
     if command=='help':
         output({'commands':['fresh','fresh-bootstrap','bootstrap','status','bff-diagnose','bff-start','bff-clear-stale','test',
                            'authority-preflight','authority-evidence','authorization-plan','authorization-apply','authorization-reconcile',
-                           'consent-verify','consent-plan','consent-apply','authority-status','runtime-acceptance','bff-runtime-plan','bff-restart'],
+                           'consent-verify','consent-plan','consent-apply','authority-status','runtime-acceptance','bff-runtime-plan','bff-restart',
+                            'introspection-plan','introspection-stage','introspection-restart','introspection-status'],
                 'writeConfirmation':{'authorization-apply':'WSO2_CIAM_V10_AUTHORITY_CONFIRM=AUTHORIZE_EXISTING_V10_OIDC_AND_ASSIGN_SCIM_USERS'},
-                'safety':'Consent apply refuses until feature and API contract verified'})
+                'safety':'Consent apply refuses until feature and API contract verified',
+                 'introspection':'Separate confirmed config stage and WSO2 v10-only restart; runtime permission verification still required'})
     elif command=='fresh':prepare()
     elif command=='fresh-bootstrap':
         repo_guard()
@@ -223,6 +226,9 @@ def main():
                      'consent-apply','authority-status'):
         repo_guard();root_guard()
         run([sys.executable,AUTHORITY,command])
+    elif command in ('introspection-plan','introspection-stage','introspection-restart','introspection-status'):
+        repo_guard();root_guard()
+        run([sys.executable,INTROSPECTION,command.split('-',1)[1]])
     elif command=='runtime-acceptance':
         root_guard()
         run([sys.executable,HERE/'authority/acceptance.py'])
