@@ -256,6 +256,50 @@ def get_or_raise(api, path, auth=None):
         raise InspectionError('GET_HTTP_' + str(status))
     return doc
 
+def api_cursor_from_link(href, root, seen):
+    """Extract an opaque 'after' cursor; never fetch a server-provided URL.
+
+    WSO2 may advertise absolute https://localhost:9443 links even though
+    the host-side TLS-pinned bridge is https://localhost:9444. Only the
+    opaque cursor is reused against the original, pinned API endpoint.
+    """
+    if (not isinstance(href, str) or not href or len(href) > 2048
+            or any(ord(ch) <= 32 or ord(ch) == 127 for ch in href)
+            or '\\' in href):
+        raise InspectionError('UNSAFE_API_CURSOR')
+    try:
+        parsed = urlsplit(href)
+        if parsed.fragment or parsed.username is not None or parsed.password is not None:
+            raise InspectionError('UNSAFE_API_CURSOR_ORIGIN')
+        if parsed.scheme or parsed.netloc:
+            if (parsed.scheme != 'https' or parsed.hostname not in ('localhost', '127.0.0.1')
+                    or parsed.port not in (9443, 9444)):
+                raise InspectionError('UNSAFE_API_CURSOR_ORIGIN')
+    except ValueError:
+        raise InspectionError('UNSAFE_API_CURSOR_ORIGIN') from None
+    # WSO2 sometimes omits the tenant prefix in links or returns query-only hrefs.
+    local_root = root.split('/api/server/', 1)[-1]
+    acceptable = {root, '/api/server/' + local_root, ''}
+    if parsed.path not in acceptable or (not parsed.path and (parsed.scheme or parsed.netloc)):
+        raise InspectionError('UNSAFE_API_CURSOR_PATH')
+    if not parsed.query:
+        raise InspectionError('UNSAFE_API_CURSOR')
+    try:
+        params = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        raise InspectionError('UNSAFE_API_CURSOR') from None
+    if not params.keys() <= {'after', 'limit'}:
+        raise InspectionError('UNSAFE_API_CURSOR_QUERY')
+    limit = params.get('limit')
+    if limit is not None and (len(limit) != 1 or limit[0] != '100'):
+        raise InspectionError('UNSAFE_API_CURSOR_QUERY')
+    cursor = params.get('after', [])
+    if (len(cursor) != 1 or not cursor[0] or len(cursor[0]) > 512
+            or any(ord(ch) < 33 or ord(ch) == 127 for ch in cursor[0])
+            or cursor[0] in seen):
+        raise InspectionError('UNSAFE_API_CURSOR')
+    return cursor[0]
+
 def list_all(api, root, auth, kind):
     """Bounded pagination; refuses to label a partial response complete."""
     rows, next_page, seen = [], None, set()
@@ -295,14 +339,8 @@ def list_all(api, root, auth, kind):
                 if len(part) >= 100:
                     raise InspectionError('API_PAGINATION_UNKNOWN_MORE')
                 return rows
-            href = candidates[0].get('href')
-            parsed = urlsplit(str(href))
-            if parsed.scheme or parsed.netloc or parsed.path not in (root, root.removeprefix('/t/'+root.split('/')[2]) if root.startswith('/t/') else root):
-                raise InspectionError('UNSAFE_API_CURSOR_ORIGIN')
-            cursor = parse_qs(parsed.query).get('after', [])
-            if len(cursor) != 1 or not cursor[0] or len(cursor[0]) > 512 or cursor[0] in seen:
-                raise InspectionError('UNSAFE_API_CURSOR')
-            seen.add(cursor[0]); next_page = cursor[0]
+            next_page = api_cursor_from_link(candidates[0].get('href'), root, seen)
+            seen.add(next_page)
     raise InspectionError('PAGINATION_LIMIT_REACHED')
 
 def reduced_oidc(protocol):

@@ -59,6 +59,49 @@ class InspectionTests(unittest.TestCase):
         with self.assertRaises(m.InspectionError):
             m.list_all(api,'/api/server/v1/api-resources',None,'apis')
 
+    def test_absolute_localhost_cursor_replayed_only_against_pinned_root(self):
+        root='/api/server/v1/api-resources'
+        api=FakeAPI({
+          root+'?limit=100':(200,{'APIResources':[{'id':'one'}], 'totalResults':2,
+             'links':[{'rel':'next', 'href':'https://localhost:9443'+root+'?limit=100&after=TmV4dA%3D%3D'}]}),
+          root+'?limit=100&after=TmV4dA%3D%3D':(200,{'APIResources':[{'id':'two'}], 'totalResults':2})})
+        result=m.list_all(api,root,None,'apis')
+        self.assertEqual([x['id'] for x in result],['one','two'])
+        self.assertTrue(all(path.startswith(root+'?') for method,path in api.calls))
+        self.assertTrue(all('localhost' not in path for method,path in api.calls))
+
+    def test_tenant_cursor_allows_unqualified_local_path(self):
+        root='/t/aurora.identity.test/api/server/v1/api-resources'
+        api=FakeAPI({
+          root+'?limit=100':(200,{'APIResources':[{'id':'one'}], 'totalResults':2,
+             'links':[{'rel':'next', 'href':'https://localhost:9443/api/server/v1/api-resources?after=bmV4dA=='}]}),
+          root+'?limit=100&after=bmV4dA%3D%3D':(200,{'APIResources':[{'id':'two'}], 'totalResults':2})})
+        result=m.list_all(api,root,None,'apis')
+        self.assertEqual(len(result),2)
+
+    def test_cursor_query_only_is_reconstructed_locally(self):
+        root='/api/server/v1/api-resources'
+        api=FakeAPI({
+          root+'?limit=100':(200,{'APIResources':[{'id':'one'}], 'totalResults':2,
+             'links':[{'rel':'next', 'href':'?after=bmV4dA=='}]}),
+          root+'?limit=100&after=bmV4dA%3D%3D':(200,{'APIResources':[{'id':'two'}], 'totalResults':2})})
+        self.assertEqual(len(m.list_all(api,root,None,'apis')),2)
+
+    def test_cursor_rejects_tenant_crossing_and_wrong_port(self):
+        root='/t/aurora.identity.test/api/server/v1/api-resources'
+        for href in (
+          'https://localhost:9443/t/brisa.identity.test/api/server/v1/api-resources?after=a',
+          'http://localhost:9443/t/aurora.identity.test/api/server/v1/api-resources?after=a',
+          'https://localhost:9445/t/aurora.identity.test/api/server/v1/api-resources?after=a',
+          'https://localhost:9443/t/aurora.identity.test/api/server/v1/api-resources?after=a&evil=1',
+        ):
+            with self.subTest(href=href):
+                api=FakeAPI({root+'?limit=100':(200,{'APIResources':[{'id':'one'}], 'totalResults':2,
+                   'links':[{'rel':'next','href':href}]})})
+                with self.assertRaises(m.InspectionError):
+                    m.list_all(api,root,None,'apis')
+                self.assertEqual(len(api.calls),1)
+
     def test_oidc_reduction_does_not_export_client_secret(self):
         o=m.reduced_oidc({'clientId':'public-client-id','clientSecret':'DO_NOT_LEAK',
                           'pkce':{'mandatory':True},'subject':{'subjectType':'pairwise'},
