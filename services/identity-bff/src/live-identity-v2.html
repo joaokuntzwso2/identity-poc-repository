@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Identity Lab · WSO2 Live</title>
+  <link rel="stylesheet" href="/live-identity-v2.css">
+  <script defer src="/live-identity-v2.js"></script>
+</head>
+<body>
+  <main>
+    <header class="header"><span class="brand">identity<span class="dot">.</span>lab</span><span class="context">WSO2 Identity Server 7.3 · Live identity</span></header>
+    <section class="hero">
+      <p class="eyebrow">CIAM · AURORA + BRISA</p>
+      <h1>Identidade verificada.<br><span>Sem usuários fictícios.</span></h1>
+      <p>Este portal consulta sessões verificadas pelo BFF, valida a atividade dos tokens de acesso no WSO2 e não substitui controles que ainda não foram implementados.</p>
+      <div class="actions"><button id="refresh" type="button">Atualizar sessão</button><button id="logout" type="button" disabled>Encerrar sessão local</button></div>
+      <p id="status" role="status">Verificando identidade no WSO2...</p>
+    </section>
+    <section aria-labelledby="channels-heading"><div class="section-head"><div><p class="eyebrow">CANAIS OIDC</p><h2 id="channels-heading">Autenticação por marca</h2></div><p id="source">Origem: aguardando leitura</p></div><div id="channels" class="cards" aria-live="polite"></div></section>
+    <section class="evidence"><h2>O que esta página pode provar</h2><p>Login via Authorization Code + PKCE e ID token validado pelo BFF; token de acesso ativo e scopes lidos do WSO2; decisão real da API protegida com <code>ciam:profile:read</code>.</p><p>Escopos OAuth não representam automaticamente funções de negócio ou papéis. Dados de perfil somente são apresentados se estiverem em claims do ID token assinado e validado.</p></section>
+    <section class="limitations"><h2>Capacidades não habilitadas</h2><p>Consentimento, assurance por atributo, MFA/step-up, identidade de agentes, hierarquia B2B, histórico de compras e encerramento de SSO no WSO2 não são simulados por este portal. Sua demonstração depende de implementação e teste próprios.</p></section>
+    <footer><small>Em modo live, nenhum clique seleciona ou troca artificialmente um usuário. Para trocar de conta, autentique-se novamente no WSO2; encerrar a sessão local não encerra necessariamente a sessão SSO do IdP.</small></footer>
+  </main>
+</body>
+</html>

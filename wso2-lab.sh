@@ -28,7 +28,8 @@ case "$CMD" in
     # genuinely distinct tenant roots and their pairwise OIDC registrations.
     "$ROOT/wso2-lab.sh" core
     if [ -f var/wso2/lab.env ];then set -a; source var/wso2/lab.env; set +a;fi
-    node scripts/wso2/tenant-brand-bootstrap.mjs bootstrap;;
+    node scripts/wso2/tenant-brand-bootstrap.mjs bootstrap
+"$ROOT/scripts/wso2/runtime-identity.sh" start;;
   bootstrap-tenants)
     if [ "${WSO2_LAB_CONFIRM:-}" != 'CREATE_SYNTHETIC_RESOURCES' ];then
       echo 'LAB_ERROR: EXPLICIT_APPLY_ACK_REQUIRED' >&2; exit 2
@@ -42,7 +43,10 @@ case "$CMD" in
     fi
     if [ -f var/wso2/lab.env ];then set -a; source var/wso2/lab.env; set +a;fi
     node scripts/wso2/tenant-brand-bootstrap.mjs bootstrap;;
-  tenant-auth-check)
+  runtime-start|runtime-stop|runtime-status|runtime-preflight)
+"$ROOT/scripts/wso2/runtime-identity.sh" "${CMD#runtime-}";;
+
+tenant-auth-check)
     if [ -f var/wso2/lab.env ];then set -a; source var/wso2/lab.env; set +a;fi
     node scripts/wso2/tenant-brand-bootstrap.mjs auth-check;;
   tenant-brand-status)
@@ -82,5 +86,7 @@ case "$CMD" in
   test)node --test scripts/wso2/*.test.mjs;;
   docker-up)docker compose --env-file var/wso2/lab.env -f deploy/wso2/compose.yaml up -d;;
   docker-down)docker compose --env-file var/wso2/lab.env -f deploy/wso2/compose.yaml down;;
+  bootstrap-ciam)
+    exec bash "$ROOT/scripts/wso2/ciam-bootstrap-v8.sh" "${@:2}";;
   *)echo 'Usage: ./wso2-lab.sh bootstrap|bootstrap-tenants|bootstrap-pairwise|tenant-auth-check|tenant-brand-status|core|plan|status|reset|bff-env|test|iamctl-*';exit 2;;
 esac
