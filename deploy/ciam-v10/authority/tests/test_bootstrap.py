@@ -82,6 +82,18 @@ class Fake:
 
 
 class SecurityTests(unittest.TestCase):
+    def setUp(self):
+        # Isolate the test-only environment from the operator's selected
+        # role API and write confirmations. Individual tests may override
+        # these values with their own patch.dict contexts.
+        self._ciam_test_env = patch.dict(os.environ, {
+            a.ROLE_API_ENV: 'v3',
+            a.ROLE_V2_CONFIRM_ENV: '',
+            'WSO2_CIAM_V10_AUTHORITY_CONFIRM': '',
+        })
+        self._ciam_test_env.start()
+        self.addCleanup(self._ciam_test_env.stop)
+
     def make(self):
         ts,rs,oidc,journal=fixture()
         return ts,rs,oidc,journal,Fake(ts,rs,oidc)

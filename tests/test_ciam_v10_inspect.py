@@ -102,6 +102,24 @@ class InspectionTests(unittest.TestCase):
                     m.list_all(api,root,None,'apis')
                 self.assertEqual(len(api.calls),1)
 
+    def test_super_role_inventory_uses_verified_v2_endpoint(self):
+        paths=[]
+        def fake_list_all(api, root, auth, kind):
+            paths.append(root)
+            return []
+        def fake_get_or_raise(api, path, auth=None):
+            if path == '/api/server/v1/tenants?limit=100&offset=0':
+                return {'tenants': [], 'totalResults': 0}
+            raise m.InspectionError('TENANT_LOOKUP_UNAVAILABLE_IN_UNIT_TEST')
+        report={'issues': []}
+        journals={'admin': {'username': 'test-admin', 'password': 'test-only'}}
+        with patch.object(m, 'list_all', side_effect=fake_list_all), \
+             patch.object(m, 'get_or_raise', side_effect=fake_get_or_raise):
+            result=m.inspect_super(object(), journals, report)
+        self.assertEqual(result['catalogs']['roles']['state'], 'COMPLETE')
+        self.assertIn('/scim2/v2/Roles', paths)
+        self.assertNotIn('/scim2/v3/Roles', paths)
+
     def test_oidc_reduction_does_not_export_client_secret(self):
         o=m.reduced_oidc({'clientId':'public-client-id','clientSecret':'DO_NOT_LEAK',
                           'pkce':{'mandatory':True},'subject':{'subjectType':'pairwise'},

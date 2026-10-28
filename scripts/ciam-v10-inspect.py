@@ -584,7 +584,7 @@ def inspect_super(api, journals, report):
         ('apiResources','/api/server/v1/api-resources','apis'),
         ('users','/scim2/Users','scim'),
         ('groups','/scim2/Groups','scim'),
-        ('roles','/scim2/v3/Roles','scim')):
+        ('roles','/scim2/v2/Roles','scim')):
         try:
             rows=list_all(api,root,auth,kind)
             result['catalogs'][key]={'state':'COMPLETE','count':len(rows)}
