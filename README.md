@@ -2928,3 +2928,16 @@ See [`../../docs/CIAM_V10_IMPLEMENTATION_MAP.md`](#ciam-doc-docs-ciam-v10-implem
 ---
 
 <!-- CIAM_SINGLE_README_V1_END -->
+
+<!-- CIAM_V10_INSPECTION_BEGIN -->
+## Read-only CIAM v10 repository and WSO2 inspection (P0.01–P0.03)
+
+Before implementing new CIAM features, run the [source and runtime inspection](docs/CIAM_V10_INSPECTION.md) against a pinned Git commit. It inventories Carbon Super, Aurora, and Brisa using existing private WSO2 credentials; compares live management-API readbacks with journaled resources; checks OIDC clients, grants, PKCE, discovery, and audience configuration; and records blockers without changing WSO2 resources. Reports remain private in `${CIAM_V10_HOME:-$HOME/wso2-ciam-v10}/inspection/` and must not be committed.
+
+```bash
+python3 -m unittest discover -s tests -p 'test_ciam_v10_inspect.py' -v
+python3 scripts/ciam-v10-inspect.py --mode all --with-runtime-negative
+```
+
+This is a read-only inspection, **not** browser authentication, MFA, consent, or update-level certification. The image tag alone cannot attest the exact WSO2 product update level.
+<!-- CIAM_V10_INSPECTION_END -->
