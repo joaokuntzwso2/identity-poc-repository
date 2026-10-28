@@ -4,7 +4,7 @@ import { inspectAccessToken, requireAuthorityForClient, AuthorityUnavailable } f
 const issuer='https://localhost:9444/t/aurora.identity.test/oauth2/token';
 const a={clientId:'aurora-rp',clientSecret:'only-in-server',issuer};
 const b={clientId:'brisa-rp',clientSecret:'only-in-server',issuer:'https://localhost:9444/t/brisa.identity.test/oauth2/token'};
-const login={verified:true,accessToken:'actual-token'};
+const login={verified:true,accessToken:'actual-token',claims:{iss:issuer,sub:'bound-aurora-user',aud:a.clientId,exp:4102444800}};
 const response = v => async () => ({status:200,headers:{get:()=>null},text:async()=>JSON.stringify(v)});
 test('anonymous, fixture, wrong-tenant sessions fail without fetching WSO2',async()=>{
   const clients={'aurora-web':a,'brisa-web':b};
@@ -20,7 +20,7 @@ test('introspection timeout or API 401 cannot fall back to a synthetic permissio
   await assert.rejects(inspectAccessToken(login,a,{fetcher:async()=>({status:401,headers:{get:()=>null},text:async()=>''})}),AuthorityUnavailable);
 });
 test('wrong issuer, wrong audience, expired and revoked access tokens are denied',async()=>{
-  const base={active:true,client_id:a.clientId,scope:'ciam:profile:read',exp:4102444800,aud:'https://api.ciam-v10.test/profile'};
+  const base={active:true,client_id:a.clientId,sub:login.claims.sub,scope:'ciam:profile:read',exp:4102444800,aud:'https://api.ciam-v10.test/profile'};
   for (const change of [{iss:b.issuer},{aud:'different'},{exp:42},{active:false},{client_id:b.clientId}]) {
     const result=await inspectAccessToken(login,a,{fetcher:response({...base,...change}),audience:'https://api.ciam-v10.test/profile'});
     assert.equal(result.active,false);

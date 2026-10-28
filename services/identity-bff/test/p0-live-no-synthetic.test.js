@@ -10,27 +10,25 @@ import { validateJwtClaims } from '../src/oidc.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, '../src/server.js'), 'utf8');
 const client = { clientId: 'fake-rp', clientSecret: 'not-a-real-secret', issuer: 'https://localhost:9444/t/aurora.identity.test/oauth2/token' };
-const session = { logins: { 'aurora-web': { verified: true, accessToken: 'mock-opaque-not-a-real-token' } } };
+const session = { logins: { 'aurora-web': { verified: true, accessToken: 'mock-opaque-not-a-real-token', claims: { iss: client.issuer, sub: 'bound-fixture-sub', aud: client.clientId, exp: 4102444800 } } } };
 const scope = 'ciam:profile:read';
 const aud = 'https://api.ciam-v10.test/profile';
 const response = (v, status = 200) => async () => ({ status, headers: { get: () => null }, text: async () => JSON.stringify(v) });
 
-test('live BFF server imports and enforces mandatory policy before route handling', () => {
+test('live BFF enforces default-deny before dispatch and never starts preview mode', () => {
   assert.match(src, /import\s*\{\s*liveApiDenial\s*\}\s*from\s*['"]\.\/live-api-policy\.js['"]/);
+  assert.match(src, /LIVE_WSO2_REQUIRED_NO_SYNTHETIC_MODE/);
   const handle = src.indexOf('async function handle(req, res) {');
   const gate = src.indexOf('liveApiDenial(u.pathname, req.method)', handle);
-  const api = src.indexOf('apiHandler(req, res, u, s)', handle);
-  assert.ok(handle >= 0 && gate > handle && api > gate, 'gateway must precede the API dispatcher');
-  assert.match(src, /const wso2Live\s*=\s*process\.env\.IDENTITY_MODE\s*===\s*['"]live-wso2['"]/);
+  const dispatch = src.indexOf('return await api(req, res, u, s)', handle);
+  assert.ok(handle >= 0 && gate > handle && dispatch > gate, 'default-deny must precede API dispatch');
   assert.match(src, /const current = await inspectAccessToken\(login, c\)/);
   assert.match(src, /requireAuthorityForClient\(s, key, clients/);
   assert.match(src, /sessionStore\.destroy\(s, res\)/);
   assert.match(src, /exchangeAuthorizationCode\(doc,/);
   assert.match(src, /verifyIdToken\(tokens\.id_token,/);
-  assert.match(src, /if \(wso2Live\) \{/);
   assert.match(src, /live-wso2\.html/);
 });
-
 test('only five known endpoint/method pairs can enter existing live handlers', () => {
   assert.deepEqual([...LIVE_API_ALLOWLIST].sort(), ['/api/health','/api/wso2-status','/api/identity/me','/api/protected/profile','/api/logout'].sort());
   for (const [path, method] of [
@@ -63,7 +61,7 @@ test('unsupported methods fail closed on allowed live paths', () => {
 });
 
 test('fixtures cannot turn into a token or permission decision during WSO2 outage', async () => {
-  const fixtureLogin = { verified: true, claims: { sub: 'demo-persona' }, accessToken: 'fixture-token' };
+  const fixtureLogin = { verified: true, claims: { iss: client.issuer, sub: 'demo-persona', aud: client.clientId, exp: 4102444800 }, accessToken: 'fixture-token' };
   await assert.rejects(inspectAccessToken(fixtureLogin, client,
     { fetcher: async () => { throw Error('WSO2_UNAVAILABLE'); }, audience: aud }), AuthorityUnavailable);
   const checked = await requireAuthorityForClient({ logins: { 'aurora-web': fixtureLogin } },
@@ -107,7 +105,7 @@ test('no operator or consent success is available through default-deny policy', 
 
 test('business API audience URI is accepted only when WSO2 introspection actually returns it', async () => {
   assert.equal(aud.length, 33);
-  const data = {active:true, client_id:client.clientId, iss:client.issuer, exp:4102444800,
+  const data = {active:true, client_id:client.clientId, sub:session.logins['aurora-web'].claims.sub, iss:client.issuer, exp:4102444800,
     scope:'openid ciam:profile:read', aud:[client.clientId,aud]};
   const result = await inspectAccessToken(session.logins['aurora-web'], client,
     {fetcher:response(data), audience:aud});

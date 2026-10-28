@@ -1,84 +1,120 @@
-/** OIDC fixture exists ONLY inside the test suite. The demo has no mock IdP. */
+/** Test-only OIDC over HTTPS; never WSO2 live credentials or preview persona mode. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { createServer as createHttpsServer } from 'node:https';
 import { generateKeyPairSync, sign, createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startIsolatedLiveBff } from './helpers/live-test-harness.js';
 
+const sub = 'pairwise-signed-oidc-test-user';
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = keys.publicKey.export({ format: 'jwk' });
-Object.assign(jwk, { kid: 'fixture', use: 'sig', alg: 'RS256' });
-let issuer, provider, bff, origin, verifierChallenge, expectedNonce;
-const minted = [];
-function token(nonce) {
+Object.assign(jwk, { kid: 'test-only-jwk', use: 'sig', alg: 'RS256' });
+function signIdToken(issuer, clientId, nonce) {
   const now = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(JSON.stringify({ kid: 'fixture', alg: 'RS256', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({ iss: issuer, aud: 'aurora-test-client', sub: 'pairwise-sub-fixture', nonce, iat: now, exp: now + 300 })).toString('base64url');
-  const signature = sign('RSA-SHA256', Buffer.from(`${header}.${payload}`), keys.privateKey).toString('base64url');
-  return `${header}.${payload}.${signature}`;
+  const header = Buffer.from(JSON.stringify({ kid: jwk.kid, alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify({ iss: issuer, aud: clientId, sub, nonce, iat: now, exp: now + 300 })).toString('base64url');
+  const signature = sign('RSA-SHA256', Buffer.from(`${header}.${body}`), keys.privateKey).toString('base64url');
+  return `${header}.${body}.${signature}`;
 }
-async function waitHealth() { for (let i = 0; i < 100; i++) { try { const response = await fetch(origin + '/api/health'); if (response.ok) return; } catch { } await new Promise(r => setTimeout(r, 40)); } throw new Error('BFF unavailable'); }
-
-test.before(async () => {
-  provider = createServer(async (req, res) => {
-    const url = new URL(req.url, issuer);
-    if (url.pathname === '/jwks') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ keys: [jwk] })); }
-    if (url.pathname === '/oauth2/token' && req.method === 'POST') {
-      let body = ''; for await (const part of req) body += part;
-      const fields = new URLSearchParams(body);
-      const challenge = createHash('sha256').update(fields.get('code_verifier') || '').digest('base64url');
-      if (fields.get('code') !== 'test-code' || fields.get('client_id') !== 'aurora-test-client' || challenge !== verifierChallenge) { res.writeHead(400); return res.end('{}'); }
-      minted.push(true);
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(JSON.stringify({ id_token: token(expectedNonce), access_token: 'secret-only-for-test', token_type: 'Bearer', expires_in: 300 }));
+async function httpsFixture(t) {
+  const dir = await mkdtemp(join(tmpdir(), 'ciam-v10-oidc-test-'));
+  const key = join(dir, 'local-test.key');
+  const cert = join(dir, 'local-test.crt');
+  const cfg = join(dir, 'local-test.cnf');
+  const config = '[req]\ndistinguished_name=dn\nx509_extensions=v3_req\nprompt=no\n[dn]\nCN=127.0.0.1\n[v3_req]\nbasicConstraints=CA:TRUE\nkeyUsage=digitalSignature,keyEncipherment,keyCertSign\nsubjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\n';
+  await writeFile(cfg, config, { mode: 0o600 });
+  execFileSync('openssl', ['req', '-x509', '-nodes', '-newkey', 'rsa:2048', '-keyout', key,
+    '-out', cert, '-days', '1', '-config', cfg, '-extensions', 'v3_req'], { stdio: 'ignore' });
+  await chmod(key, 0o600);
+  let origin;
+  let challenge = null, nonce = null, mismatchSub = false, introspections = 0;
+  const provider = createHttpsServer({ key: await readFile(key), cert: await readFile(cert) }, async (req, res) => {
+    const u = new URL(req.url, origin);
+    const match = /^\/t\/(aurora|brisa)\.identity\.test\/oauth2\/(.+)$/.exec(u.pathname);
+    const brand = match?.[1];
+    const action = match?.[2];
+    if (!brand) { res.writeHead(404); return res.end('{}'); }
+    const issuer = `${origin}/t/${brand}.identity.test/oauth2/token`;
+    const clientId = `${brand}-web-offline-test-only`;
+    const clientSecret = `${brand}-web-never-real-test-only`;
+    const respond = (status, data) => {
+      res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(data));
+    };
+    if (action === 'token/.well-known/openid-configuration' && req.method === 'GET') {
+      return respond(200, { issuer, authorization_endpoint: `${origin}/t/${brand}.identity.test/oauth2/authorize`,
+        token_endpoint: issuer, jwks_uri: `${origin}/t/${brand}.identity.test/oauth2/jwks` });
     }
-    const doc = { issuer, authorization_endpoint: new URL('/authorize', issuer).toString(), token_endpoint: new URL('/oauth2/token', issuer).toString(), jwks_uri: new URL('/jwks', issuer).toString(), subject_types_supported: ['pairwise'] };
-    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(doc));
+    if (action === 'jwks' && req.method === 'GET') return respond(200, { keys: [jwk] });
+    if (action === 'token' && req.method === 'POST') {
+      let body = ''; for await (const c of req) body += c;
+      const f = new URLSearchParams(body);
+      const pkce = createHash('sha256').update(f.get('code_verifier') || '').digest('base64url');
+      const authorization = req.headers.authorization;
+      if (brand !== 'aurora' || f.get('code') !== 'signed-fixture-code' ||
+          pkce !== challenge || !nonce ||
+          authorization !== `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`) {
+        return respond(400, { error: 'invalid_grant' });
+      }
+      return respond(200, { access_token: 'local-opaque-test-token', id_token: signIdToken(issuer, clientId, nonce),
+        token_type: 'Bearer', expires_in: 300 });
+    }
+    if (action === 'introspect' && req.method === 'POST') {
+      introspections += 1;
+      return respond(200, { active: true, client_id: clientId, iss: issuer,
+        sub: mismatchSub ? 'wrong-test-subject' : sub,
+        exp: Math.floor(Date.now()/1000)+300, scope: 'openid', aud: clientId });
+    }
+    return respond(404, { error: 'unknown_mock_endpoint' });
   });
-  await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
-  issuer = `http://127.0.0.1:${provider.address().port}/oauth2/token`;
-  // Use a free port: acquire with temporary listener, then release before BFF starts.
-  const temp = createServer(); await new Promise(resolve => temp.listen(0, '127.0.0.1', resolve));
-  const port = temp.address().port; await new Promise(resolve => temp.close(resolve));
-  origin = `http://127.0.0.1:${port}`;
-  bff = spawn(process.execPath, ['services/identity-bff/src/server.js'], {
-    cwd: process.cwd(), env: { ...process.env, PORT: String(port), BIND_HOST: '127.0.0.1', PUBLIC_ORIGIN: origin, ALLOW_INSECURE_LOCAL: 'true', NODE_ENV: 'development', OIDC_ISSUER: issuer, OIDC_AURORA_WEB_CLIENT_ID: 'aurora-test-client', OIDC_DISCOVERY_URL: `http://127.0.0.1:${provider.address().port}/test-discovery`, ENABLE_EPHEMERAL_CONSENT: 'true' }, stdio: ['ignore', 'pipe', 'pipe']
+  await new Promise((resolve, reject) => provider.once('error', reject).listen(0, '127.0.0.1', resolve));
+  origin = `https://127.0.0.1:${provider.address().port}`;
+  t.after(async () => {
+    await new Promise(resolve => provider.close(resolve));
+    await rm(dir, { recursive: true, force: true });
   });
-  await waitHealth();
-});
-test.after(async () => { bff?.kill('SIGTERM'); await new Promise(resolve => provider?.close(resolve)); });
+  return { origin, caCert: cert, expectAuthorization(c, n) { challenge = c; nonce = n; },
+    setMismatch() { mismatchSub = true; }, introspectionCount: () => introspections };
+}
 
-test('actual BFF login + signed JWT fixture rotates cookie and requires origin-client consent', async () => {
-  const authorization = await fetch(origin + '/auth/aurora-web/login', { redirect: 'manual' });
-  assert.equal(authorization.status, 302);
-  const originalCookie = authorization.headers.get('set-cookie').split(';')[0];
-  const authorUrl = new URL(authorization.headers.get('location'));
-  assert.equal(authorUrl.searchParams.get('code_challenge_method'), 'S256');
-  verifierChallenge = authorUrl.searchParams.get('code_challenge');
-  expectedNonce = authorUrl.searchParams.get('nonce');
-  const state = authorUrl.searchParams.get('state');
-  const callback = await fetch(`${origin}/auth/aurora-web/callback?code=test-code&state=${encodeURIComponent(state)}`, { headers: { cookie: originalCookie }, redirect: 'manual' });
+test('isolated HTTPS OIDC signed callback binds subject and rejects preview consent and subject confusion', async t => {
+  const idp = await httpsFixture(t);
+  const { base } = await startIsolatedLiveBff(t, { idpOrigin: idp.origin, caCert: idp.caCert });
+  const start = await fetch(`${base}/auth/aurora-web/login`, { redirect: 'manual' });
+  assert.equal(start.status, 302);
+  const beforeCookie = start.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(beforeCookie);
+  const url = new URL(start.headers.get('location'));
+  assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
+  idp.expectAuthorization(url.searchParams.get('code_challenge'), url.searchParams.get('nonce'));
+  const state = url.searchParams.get('state');
+  const callback = await fetch(`${base}/auth/aurora-web/callback?code=signed-fixture-code&state=${encodeURIComponent(state)}`, {
+    headers: { cookie: beforeCookie }, redirect: 'manual'
+  });
   assert.equal(callback.status, 302);
-  const freshCookie = callback.headers.get('set-cookie').split(';')[0];
-  assert.notEqual(freshCookie, originalCookie, 'Session ID not rotated after verified login');
+  const afterCookie = callback.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(afterCookie);
+  assert.notEqual(afterCookie, beforeCookie, 'Verified login must rotate cookie');
   assert.equal(callback.headers.get('referrer-policy'), 'no-referrer');
-  assert.equal(minted.length, 1);
-  const old = await fetch(origin + '/api/session', { headers: { cookie: originalCookie } }).then(x => x.json());
-  assert.equal(old.authenticated, false, 'Old pre-auth SID retained identity');
-  const actual = await fetch(origin + '/api/session', { headers: { cookie: freshCookie } }).then(x => x.json());
-  assert.equal(actual.authenticated, true);
-  assert.equal(actual.logins['aurora-web'].verified, true);
-  assert.equal(actual.pairwise.status, 'INCOMPLETE');
-  assert.ok(!JSON.stringify(actual).includes('secret-only-for-test'));
-  // Having Aurora Web auth must not authorize Brisa Web consent management.
-  const args = { origin: 'brisa', target: 'aurora', client: 'brisa-web', purpose: 'delivery', action: 'GRANTED' };
-  const response = await fetch(origin + '/api/consent', { method: 'POST', headers: { cookie: freshCookie, origin, 'x-csrf-token': actual.csrf, 'content-type': 'application/json' }, body: JSON.stringify(args) });
-  assert.equal(response.status, 403);
-  assert.equal((await response.json()).error, 'origin_client_authentication_required');
-  const valid = { ...args, origin: 'aurora', target: 'brisa', client: 'aurora-web' };
-  const post = await fetch(origin + '/api/consent', { method: 'POST', headers: { cookie: freshCookie, origin, 'x-csrf-token': actual.csrf, 'content-type': 'application/json' }, body: JSON.stringify(valid) });
-  assert.equal(post.status, 201);
-  const history = await fetch(origin + '/api/consent', { headers: { cookie: freshCookie } }).then(x => x.json());
-  assert.equal(history.events.length, 1);
-  assert.equal(history.mode, 'EPHEMERAL_EXTENSION_PILOT');
+  const old = await fetch(`${base}/api/identity/me`, { headers: { cookie: beforeCookie } }).then(r => r.json());
+  assert.equal(old.authenticated, false);
+  const current = await fetch(`${base}/api/identity/me`, { headers: { cookie: afterCookie } }).then(r => r.json());
+  assert.equal(current.authenticated, true);
+  assert.equal(current.clients['aurora-web'].authenticated, true);
+  assert.equal(current.clients['brisa-web'].authenticated, false);
+  assert.ok(idp.introspectionCount() > 0);
+  assert.ok(!JSON.stringify(current).includes('local-opaque-test-token'));
+  const consent = await fetch(`${base}/api/consent`, { method: 'POST',
+    headers: { cookie: afterCookie, origin: base, 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(consent.status, 503);
+  assert.equal((await consent.json()).syntheticFallback, false);
+  const crossTenant = await fetch(`${base}/api/brands/brisa/profile?client=aurora-web`, { headers: { cookie: afterCookie } });
+  assert.equal(crossTenant.status, 403);
+  idp.setMismatch();
+  const confused = await fetch(`${base}/api/identity/me`, { headers: { cookie: afterCookie } }).then(r => r.json());
+  assert.equal(confused.authenticated, false, 'Introspection with different sub cannot authorize');
 });

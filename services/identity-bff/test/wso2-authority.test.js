@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { inspectAccessToken, introspectionUrl, requireAuthorityForClient, AuthorityUnavailable } from '../src/wso2-authority.js';
 const client = { clientId: 'rp-client', clientSecret: 'secret', issuer: 'https://localhost:9444/t/aurora.identity.test/oauth2/token' };
-const login = { verified: true, accessToken: 'secret-token' };
+const login = { verified: true, accessToken: 'secret-token', claims: { iss: client.issuer, sub: 'pairwise-test-sub', aud: client.clientId, exp: 4102444800 } };
 const fake = (data, status = 200) => async (url, init) => {
   assert.equal(url, 'https://localhost:9444/t/aurora.identity.test/oauth2/introspect');
   assert.equal(init.method, 'POST');
@@ -14,12 +14,12 @@ test('tenant-pinned introspection endpoint', () => {
   assert.throws(() => introspectionUrl('https://evil.example/oauth2/authorize'), AuthorityUnavailable);
 });
 test('issued scopes honored, not invented', async () => {
-  const result = await inspectAccessToken(login, client, { fetcher: fake({ active: true, client_id: client.clientId, exp: 4102444800, scope: 'openid ciam:profile:read', aud: 'ciam-api' }) });
+  const result = await inspectAccessToken(login, client, { fetcher: fake({ active: true, client_id: client.clientId, sub:login.claims.sub, exp: 4102444800, scope: 'openid ciam:profile:read', aud: 'ciam-api' }) });
   assert.deepEqual(result.scopes, ['openid','ciam:profile:read']);
   assert.equal(result.active, true);
 });
 test('invalid, wrong-client and expired tokens denied', async () => {
-  for (const data of [{active:false}, {active:true,client_id:'other',exp:4102444800}, {active:true,client_id:'rp-client',exp:1}]) {
+  for (const data of [{active:false}, {active:true,client_id:'other',sub:login.claims.sub,exp:4102444800}, {active:true,client_id:'rp-client',sub:login.claims.sub,exp:1}]) {
     const r = await inspectAccessToken(login, client, {fetcher: fake(data)});
     assert.equal(r.active, false);
   }
@@ -35,6 +35,6 @@ test('audience and scope checked for protected requests', async () => {
   assert.equal(yes.http,200); assert.equal(noScope.http,403); assert.equal(noConfig.http,503);
 });
 test('does not report positive scopes after wrong audience', async () => {
-  const r = await inspectAccessToken(login,client,{fetcher:fake({active:true,client_id:client.clientId,exp:4102444800,scope:'ciam:profile:read',aud:'not-the-api'}),audience:'ciam-api'});
+  const r = await inspectAccessToken(login,client,{fetcher:fake({active:true,client_id:client.clientId,sub:login.claims.sub,exp:4102444800,scope:'ciam:profile:read',aud:'not-the-api'}),audience:'ciam-api'});
   assert.equal(r.active,false);
 });

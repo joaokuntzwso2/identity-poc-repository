@@ -24,6 +24,17 @@ export function introspectionUrl(issuer) {
 export async function inspectAccessToken(login, client, { fetcher = fetch, now = () => Math.floor(Date.now() / 1000), audience = null } = {}) {
   if (!login?.verified || !login?.accessToken || typeof login.accessToken !== 'string' || login.accessToken.length > 16000 ||
       !client?.clientId || !client?.clientSecret || !client?.issuer) throw new AuthorityUnavailable();
+  // A scope and audience are NOT sufficient without an authenticated subject.
+  // WSO2's signed ID-token `sub` and token introspection `sub` must bind to
+  // the same tenant/client identity; an unavailable mapping fails closed.
+  const claims = login.claims;
+  const idAudiences = typeof claims?.aud === 'string' ? [claims.aud] : claims?.aud;
+  if (!claims || claims.iss !== client.issuer ||
+      typeof claims.sub !== 'string' || !claims.sub || claims.sub.length > 1024 ||
+      !Array.isArray(idAudiences) || !idAudiences.includes(client.clientId) ||
+      (claims.azp !== undefined && claims.azp !== client.clientId) ||
+      !Number.isSafeInteger(claims.exp) || claims.exp <= now())
+    return { active: false, scopes: [] };
   const target = introspectionUrl(client.issuer);
   const headers = {
     authorization: `Basic ${Buffer.from(`${client.clientId}:${client.clientSecret}`).toString('base64')}`,
@@ -42,6 +53,7 @@ export async function inspectAccessToken(login, client, { fetcher = fetch, now =
   // Reject ambiguous identity/client binding; some WSO2 versions omit `iss`, which
   // is acceptable here ONLY because the introspection URL is tenant-pinned.
   if (data.client_id !== client.clientId || (data.iss !== undefined && data.iss !== client.issuer) ||
+      typeof data.sub !== 'string' || !data.sub || data.sub !== claims.sub ||
       !Number.isSafeInteger(data.exp) || data.exp <= now()) return { active: false, scopes: [] };
   const scopes = parseGrantedScopes(data.scope);
   const audiences = typeof data.aud === 'string' ? [data.aud] : Array.isArray(data.aud) ? data.aud : [];

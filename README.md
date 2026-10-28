@@ -2941,3 +2941,82 @@ python3 scripts/ciam-v10-inspect.py --mode all --with-runtime-negative
 
 This is a read-only inspection, **not** browser authentication, MFA, consent, or update-level certification. The image tag alone cannot attest the exact WSO2 product update level.
 <!-- CIAM_V10_INSPECTION_END -->
+
+<!-- CIAM_P004_P007_SECURITY_BEGIN -->
+### P0.04–P0.07 security boundary hardening (source-only increment)
+
+The BFF now refuses a live access token whose introspection `sub` does not
+exactly match the signed ID-token subject of the authenticated tenant/client
+session. If WSO2 exposes different pairwise representations, establish an
+authoritative mapping and test it; **never** disable the binding to allow a demo.
+Invalid callback parameter multiplicity and ambiguous session cookies fail
+closed. These source checks are not proof of live login, seller scopes or MFA.
+
+Run `node --test services/identity-bff/test/p004-security-boundaries.test.js`,
+`npm --prefix services/identity-bff test`, and the existing
+`./scripts/ciam-v10.sh test`. To assess case permissions against a PRIVATE,
+previously generated runtime inventory, run
+`python3 scripts/ciam-v10-cases-policy-readback.py /path/to/private/inspection.json`.
+A missing case API role, scope, client authorization or user assignment is
+reported as NOT PROVEN. This script makes no WSO2 writes.
+
+**Live gate:** Re-run WSO2 introspection and all four browser client journeys
+with the actual environment before deploying the modified BFF. Complete the
+case resource and application-scoped roles through a separately reviewed,
+explicitly authorized, journaled v10 bootstrap stage. Do not reinterpret the
+existing profile-only authority bootstrap as a case-scope provisioner.
+<!-- CIAM_P004_P007_SECURITY_END -->
+
+<!-- CIAM_CASES_AND_BINDING_V1_BEGIN -->
+### WSO2 cases RBAC and live pairwise-subject binding acceptance
+
+The cases RBAC bootstrap is a **separate additive stage**:
+`deploy/ciam-v10/cases-rbac/bootstrap.py`. It creates its own private journal
+under `$CIAM_V10_HOME/private/`; it does not change existing profile-role or
+identity journals. `plan` and `verify` perform GETs only. `apply` requires
+an exact plan SHA-256 and explicit operator confirmation. An uncertain POST
+is journaled and must be investigated before retry; never delete a journal to
+force a retry. All roles use `audience.type=application` and the exact OIDC
+application ID. A client authorization is not itself a user role grant.
+
+Select the real BFF API audience with `WSO2_CIAM_CASES_API_IDENTIFIER`, then
+run `python3 deploy/ciam-v10/cases-rbac/bootstrap.py plan`. Review its actions
+and plan hash *before approving any apply*. Run `verify` after approved changes.
+The seller currently exists only in Aurora; Brisa receives customer case roles.
+The BFF should request the four scopes as configured, but WSO2 decides actual
+grants from application-scoped user roles. Case ownership and self-approval
+remain enforced independently by the business API.
+
+For **interactive live subject proof**, enable
+`WSO2_CIAM_BINDING_PROBE=1` and a unique
+`WSO2_CIAM_BINDING_RUN_ID` (12–96 alphanumeric/hyphen/underscore characters)
+before starting the BFF. On each successful
+OIDC callback, the BFF validates active access-token introspection against the
+signature-verified ID-token subject and client; failed proof denies the login.
+It writes a sanitized 0600 file outside Git under
+`$CIAM_V10_HOME/inspection/ciam-v10-binding-evidence.jsonl`.
+After authorized logins for all four clients, run
+`python3 scripts/ciam-v10-binding-results.py`. A mismatch or missing subject
+**never** triggers local email/username-based mapping; an authoritative mapping
+must be separately designed and independently proven before deployment.
+This proof is not positive business API, role or TOTP acceptance.
+<!-- CIAM_CASES_AND_BINDING_V1_END -->
+
+<!-- CIAM_V10_SECURITY_CHECKPOINT_20261028_BEGIN -->
+### CIAM v10 security implementation checkpoint — 2026-10-28
+
+The BFF is live-WSO2 only with strict signed-ID-token/introspection `sub`
+binding and fail-closed tenant, callback, scope, and audience enforcement.
+The isolated BFF regression suite passed **77/77** on the local Mac.
+Four real client callback bindings were separately observed, but this is
+**not** positive business API authorization or MFA acceptance.
+
+For the current Aurora/Brisa Cases RBAC readbacks, the four existing Business
+Administrator WEB/APP roles were updated via journaled, single-permission PATCH
+operations to remove only `ciam:cases:approve`; all four were read back and
+verified, preserving `read` and `review`. Customer/seller roles and existing
+Cases API resources/authorizations were not recreated. **Business API positive
+and negative acceptance, assurance/MFA, and federated access validation remain
+pending.** See [CIAM v10 security progress](deploy/ciam-v10/SECURITY-PROGRESS.md)
+for precise evidence boundaries, commands, and outstanding gates.
+<!-- CIAM_V10_SECURITY_CHECKPOINT_20261028_END -->

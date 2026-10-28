@@ -11,8 +11,11 @@ export class DemoSessionStore {
   }
   parseCookie(req) {
     const cookie = req.headers.cookie || '';
-    const item = cookie.split(';').map(v => v.trim()).find(v => v.startsWith(`${this.cookieName}=`));
-    return item?.slice(this.cookieName.length + 1) || null;
+    // Duplicate session cookies are ambiguous across paths/proxies; reject.
+    const matches = cookie.split(';').map(v => v.trim()).filter(v => v.startsWith(`${this.cookieName}=`));
+    if (matches.length !== 1) return null;
+    const id = matches[0].slice(this.cookieName.length + 1);
+    return /^[A-Za-z0-9_-]{40,128}$/.test(id) ? id : null;
   }
   setCookie(res, id, maxAge = 3600) {
     const value = `${this.cookieName}=${id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${this.secure ? '; Secure' : ''}`;

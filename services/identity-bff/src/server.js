@@ -4,8 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { random, fingerprint, discover, makeAuthorizationUrl, exchangeAuthorizationCode, verifyIdToken, safeEqual } from './oidc.js';
 import { DemoSessionStore } from './session-store.js';
+import { readAuthorizationResponse } from './auth-callback-guards.js';
 import { appConfig, clients } from './config.js';
 import { inspectAccessToken, requireAuthorityForClient } from './wso2-authority.js';
+import { verifyAndRecordBinding } from './binding-acceptance.js';
 import { liveApiDenial } from './live-api-policy.js';
 import { readVerifiedUserinfo } from './live-userinfo.js';
 import { handleCases } from './live-cases-v4.js';
@@ -40,7 +42,9 @@ function redirect(res, target) {
 function validLogin(login, client) {
   if (login?.verified !== true || !Number.isSafeInteger(login.claims?.exp) ||
       login.claims.exp <= Math.floor(Date.now() / 1000) ||
-      login.claims.iss !== client?.issuer) return false;
+             login.claims.iss !== client?.issuer ||
+       typeof login.claims.sub !== 'string' || !login.claims.sub ||
+       (login.claims.azp !== undefined && login.claims.azp !== client?.clientId)) return false;
   const aud = typeof login.claims.aud === 'string' ? [login.claims.aud] : login.claims.aud;
   return Array.isArray(aud) && aud.includes(client.clientId);
 }
@@ -269,8 +273,10 @@ async function handle(req, res) {
       const key = `${cb[1]}-${cb[2] === 'mobile' ? 'app' : cb[2]}`;
       if (u.pathname !== new URL(callbackUrl(key)).pathname)
         return reply(res, 400, { error: 'unregistered_callback_alias' });
-      const state = u.searchParams.get('state'), code = u.searchParams.get('code');
-      const pending = state && s.pending[state];
+      const parsed = readAuthorizationResponse(u);
+      if (!parsed.valid) return reply(res, 400, { error: 'invalid_oidc_callback_parameters' });
+      const { state, code } = parsed;
+      const pending = s.pending[state];
       if (!pending || pending.key !== key || Date.now()-pending.at > 300000)
         return reply(res, 400, { error: 'invalid_or_expired_oauth_state' });
       delete s.pending[state];
@@ -284,6 +290,12 @@ async function handle(req, res) {
         issuer: c.issuer, clientId: c.clientId, nonce: pending.nonce });
       if (typeof tokens.access_token !== 'string' || !tokens.access_token)
         return reply(res, 502, { error: 'wso2_access_token_missing' });
+      if (process.env.WSO2_CIAM_BINDING_PROBE === '1') {
+        const bound = await verifyAndRecordBinding({
+          key, client: c, login: { verified: true, claims, accessToken: tokens.access_token }
+        });
+        if (!bound) return reply(res, 502, { error: 'wso2_identity_binding_not_verified' });
+      }
       s.logins[key] = { claims, verified: true, accessToken: tokens.access_token,
         verifiedAt: new Date().toISOString() };
       sessionStore.rotate(s, res);
