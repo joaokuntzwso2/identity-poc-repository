@@ -6,9 +6,9 @@
   const B = ['aurora', 'brisa'];
   const FOUR = [
     { brand:'aurora', channel:'web', key:'aurora-web', path:'/portal/aurora/web', label:'Aurora · Web' },
-    { brand:'aurora', channel:'mobile', key:'aurora-app', path:'/portal/aurora/mobile', label:'Aurora · Mobile' },
+    { brand:'aurora', channel:'mobile', key:'aurora-app', path:'/portal/aurora/mobile', label:'Aurora · Mobile Browser Preview' },
     { brand:'brisa', channel:'web', key:'brisa-web', path:'/portal/brisa/web', label:'Brisa · Web' },
-    { brand:'brisa', channel:'mobile', key:'brisa-app', path:'/portal/brisa/mobile', label:'Brisa · Mobile' }
+    { brand:'brisa', channel:'mobile', key:'brisa-app', path:'/portal/brisa/mobile', label:'Brisa · Mobile Browser Preview' }
   ];
   const STORY = [
     { id:'multi-brand', number:'01', color:'teal', title:'Uma pessoa. Duas marcas.', eyebrow:'Experiência omnichannel',
@@ -221,6 +221,8 @@
       addText(ul,'li',`${record.id} · ${record.title} · ${record.status}`);
     }
     out.textContent=`${(data.records||[]).length} solicitações persistidas · visibilidade ${data.visibility}`;
+     if(new URLSearchParams(location.search).get('approval')==='check')
+       out.textContent += ' · Confira acima o estado persistido após o retorno do WSO2.';
   }
   async function postCase(url,payload){
     if (!me?.csrf) throw Error('CSRF indisponível');
@@ -239,8 +241,12 @@
     const out=el('v5-case-result'), id=el('v5-case-uuid').value.trim();
     if(!/^[0-9a-f-]{36}$/i.test(id)){out.textContent='UUID inválido';return;}
     const {response,data}=await postCase(caseUrl(`/${id}/approve`));
-    out.textContent=response.status===200?'WSO2 e MFA verificados. Aprovação persistida.':`HTTP ${response.status}: ${data.error}`;
-    if(response.status===200)await loadCases();
+    if(response.status===202 && data.status==='WSO2_TOTP_STEP_UP_REQUIRED' &&
+       typeof data.authorizationUrl==='string') {
+       out.textContent='Redirecionando para autenticação TOTP real do WSO2...';
+       location.assign(data.authorizationUrl);return;
+     }
+     out.textContent=`HTTP ${response.status}: ${data.error||'falha de autorização'}`;
   }
   async function logout(){
     if(!me?.csrf)return;

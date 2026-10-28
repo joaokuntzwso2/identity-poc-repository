@@ -3,6 +3,7 @@
 import { mkdirSync, openSync, readFileSync, writeSync, fsyncSync, closeSync } from 'node:fs';
 import { resolve, isAbsolute } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
+import { precheckApproval } from './case-approval-p010.js';
 
 const SCOPES = Object.freeze({
   create: 'ciam:cases:create', read: 'ciam:cases:read',
@@ -66,7 +67,7 @@ const send = (res, status, result) => {
     'cache-control':'no-store', 'x-content-type-options':'nosniff'});
   res.end(JSON.stringify(result));
 };
-export async function handleCases(req, res, u, s, {clients, authorize, sameOrigin, safeCsrf}) {
+export async function handleCases(req, res, u, s, {clients, authorize, sameOrigin, safeCsrf, beginApproval}) {
   const match = /^\/api\/brands\/(aurora|brisa)\/cases(?:\/([0-9a-f-]{36})\/approve)?$/.exec(u.pathname);
   if (!match) return false;
   const [ , brand, caseId ] = match;
@@ -84,30 +85,16 @@ export async function handleCases(req, res, u, s, {clients, authorize, sameOrigi
     send(res,401,{error:'authentication_required'});return true;
   }
   const who = actor(login.claims.iss,login.claims.sub);
-  // Approvals must have positive evidence of a fresh TOTP step in the
-  // signature-verified WSO2 ID token. A requested acr_values string alone
-  // is NEVER sufficient to pass this authorization gate.
-  if (caseId) {
-    const mfa = Array.isArray(login.claims.amr) &&
-      login.claims.amr.some(x => typeof x === 'string' && x.toLowerCase() === 'totp');
-    const authTime = login.claims.auth_time;
-    const recent = Number.isSafeInteger(authTime) &&
-      Date.now()/1000 - authTime >= 0 && Date.now()/1000 - authTime <= 300;
-    if (!mfa || !recent) {
-      send(res,403,{error:'fresh_wso2_totp_required',allowed:false});return true;
-    }
-  }
+  // A separate approval-bound WSO2 reauthentication follows authorization.
+  // MFA in an ordinary login is NEVER sufficient for approval.
   if (req.method === 'POST' && (!sameOrigin(req) || !safeCsrf(req, s))) {
     send(res,403,{error:'csrf_or_origin_denied'});return true;
   }
   try {
     if (caseId) {
-      const cases = materialize(brand), record = cases.get(caseId);
-      if (!record) { send(res,404,{error:'case_not_found'});return true; }
-      if (record.owner === who) { send(res,403,{error:'self_approval_denied'});return true; }
-      if (record.status !== 'OPEN') { send(res,409,{error:'case_not_open'});return true; }
-      persist(brand,{id:caseId,action:'approved',actor:who,at:new Date().toISOString()});
-      send(res,200,{id:caseId,status:'APPROVED',persistent:true});return true;
+      precheckApproval({brand,caseId,issuer:login.claims.iss,subject:login.claims.sub});
+      const launch = await beginApproval({session:s,key,brand,caseId});
+      send(res,202,{status:'WSO2_TOTP_STEP_UP_REQUIRED',...launch});return true;
     }
     if (req.method === 'POST') {
       const input = await body(req);
@@ -131,6 +118,6 @@ export async function handleCases(req, res, u, s, {clients, authorize, sameOrigi
     return true;
   } catch (error) {
     console.error(JSON.stringify({event:'LIVE_CASES_FAILED',message:error.message}));
-    send(res,error.status || 503,{error:'persistent_business_service_unavailable'}); return true;
+    send(res,error.status || 503,{error:error.code || 'persistent_business_service_unavailable'}); return true;
   }
 }

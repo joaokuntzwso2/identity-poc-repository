@@ -55,8 +55,10 @@ byId('case-approve').onclick=async()=>{
     const id=byId('case-id').value.trim();
     if(!/^[0-9a-f-]{36}$/.test(id)){byId('case-out').textContent='Identificador UUID inválido.';return;}
     const {response,json}=await callCases('POST',url(`/${id}/approve`));
-    byId('case-out').textContent=response.status===200?'Aprovação persistida com WSO2 + TOTP confirmado.':`HTTP ${response.status}: ${json.error}`;
-    if(response.ok)await showRecords();
+    if(response.status===202 && json.status==='WSO2_TOTP_STEP_UP_REQUIRED' && typeof json.authorizationUrl==='string'){
+      location.assign(json.authorizationUrl);return;
+    }
+    byId('case-out').textContent=`HTTP ${response.status}: ${json.error||'acesso negado'}`;
   }catch{byId('case-out').textContent='Falha ao verificar autorização/assurance.'}
 };
 void refreshCaseIdentity().catch(()=>{byId('case-out').textContent='Sem sessão WSO2 verificada.'});

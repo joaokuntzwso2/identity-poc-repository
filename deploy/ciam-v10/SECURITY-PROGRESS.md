@@ -72,3 +72,59 @@ Do not replay it or reset the private journal.
 4. Keep sensitive state out of the public repository:
    `~/wso2-ciam-v10/private/`, `~/wso2-ciam-v10/inspection/`, local client
    secrets, access/ID tokens, certificates, and browser cookies.
+
+<!-- CIAM_P008_P010_LIVE_ACCEPTANCE_BEGIN -->
+## P0.08–P0.10 — local live OIDC/TOTP business approval checkpoint (2026-10-28)
+
+**Observed outcome:** the operator-assisted real-browser runner exited zero
+with `REAL_WSO2_E2E_VERIFIED_WITH_OPERATOR_INTERACTION` against the local
+WSO2 7.3 GA and BFF. A private sanitized-evidence JSON was written under
+`~/wso2-ciam-v10/inspection/`; this document does not copy or reveal it.
+The prior P0.04–P0.07 security checkpoint above is a historical snapshot,
+not a current claim that P0.10 MFA acceptance remains incomplete.
+
+| Gate | Observed verification | Limit |
+|---|---|---|
+| Four OIDC browser clients | Aurora Web/Mobile Browser, Brisa Web/Mobile Browser completed signed callback/session + WSO2 UserInfo checks | No assertion of cross-root-tenant SSO |
+| Aurora customer create and owner visibility | HTTP 201, owner HTTP 200, persisted `OPEN` | Customer/seller are different identities |
+| Tenant isolation | Aurora session's Brisa Cases request returned HTTP 403 | Other wrong-client scenarios not yet proven live |
+| Aurora seller queue | HTTP 200, case visible with `OPEN` status | Seller session was separate |
+| Approval trigger | HTTP 202 launched a distinct WSO2 authorization/PKCE transaction | HTTP 202 alone never approves |
+| Seller TOTP and signed assurance | Browser completed and BFF accepted signed ACR, TOTP AMR, and fresh integer `auth_time` under session/subject/target binding | No TOTP secret, OTP, token, or raw subject stored here |
+| Business-state convergence | Seller and customer each read back the case as `APPROVED` over HTTP 200 | Independent audit-event/ledger readback is pending |
+| Regression | BFF **112 passed / 0 failed**; `./scripts/ciam-v10.sh test` passed | Unit and offline denials are not live negative acceptance |
+| WSO2 app policy | Aurora Web/Mobile adaptive sequences verified; Brisa unchanged | No ETag / server-side conditional-update enforcement independently attested |
+
+The acceptance check reads the private evidence file and verifies the
+`PASS_REAL_WSO2_FOUR_CLIENTS_AND_TOTP_APPROVAL` status, authenticated UserInfo
+checks on all four clients, distinct seller/customer fingerprints, scoped roles,
+expected HTTP statuses, and the customer/seller post-approval readbacks. This is
+an **operator-assisted POC**, not proof of all production safeguards.
+
+### Repeat the checks safely
+
+```bash
+npm --prefix services/identity-bff test
+./scripts/ciam-v10.sh test
+node scripts/ciam-p008-p010-preflight.mjs
+python3 scripts/ciam-p010-aurora-adaptive.py verify
+```
+
+A repeat *live* journey creates a **new persistent test case** and requires an
+authorized operator, real WSO2 credentials and TOTP. Only run it intentionally:
+
+```bash
+CIAM_P010_LOCAL_WSO2_TLS_CONFIRM=TRUST_CURRENT_LOCAL_WSO2_CERTIFICATE_FOR_BROWSER_TEST \
+python3 scripts/ciam_p010_seller_live_gate.py run-live \
+  --confirm INTERACTIVE_WSO2_AND_PERSISTENT_CASE_WRITE
+```
+
+The local TLS key pin is an explicitly opt-in test-only trust-on-first-use
+exception, not a production certificate policy. TOTP enrollment and approval
+are performed by WSO2 itself, never by fabricated test claims.
+
+**Still open:** actual live canceled/expired TOTP refusal, replay and wrong-
+client denial, scope revocation/outage, self-approval denial, SSO/logout
+characterization, and independent persisted audit-event verification. Review
+these before declaring the full P0.08–P0.10 Definition of Done.
+<!-- CIAM_P008_P010_LIVE_ACCEPTANCE_END -->

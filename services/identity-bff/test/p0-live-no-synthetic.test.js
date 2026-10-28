@@ -29,11 +29,11 @@ test('live BFF enforces default-deny before dispatch and never starts preview mo
   assert.match(src, /verifyIdToken\(tokens\.id_token,/);
   assert.match(src, /live-wso2\.html/);
 });
-test('only five known endpoint/method pairs can enter existing live handlers', () => {
-  assert.deepEqual([...LIVE_API_ALLOWLIST].sort(), ['/api/health','/api/wso2-status','/api/identity/me','/api/protected/profile','/api/logout'].sort());
+test('only six known endpoint/method pairs can enter existing live handlers', () => {
+  assert.deepEqual([...LIVE_API_ALLOWLIST].sort(), ['/api/health','/api/wso2-status','/api/identity/me','/api/protected/profile','/api/oidc/userinfo','/api/logout'].sort());
   for (const [path, method] of [
     ['/api/health','GET'], ['/api/wso2-status','GET'], ['/api/identity/me','GET'],
-    ['/api/protected/profile','GET'], ['/api/logout','POST']
+    ['/api/protected/profile','GET'], ['/api/oidc/userinfo','GET'], ['/api/logout','POST']
   ]) assert.equal(liveApiDenial(path, method), null);
 });
 

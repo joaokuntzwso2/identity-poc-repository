@@ -3020,3 +3020,50 @@ and negative acceptance, assurance/MFA, and federated access validation remain
 pending.** See [CIAM v10 security progress](deploy/ciam-v10/SECURITY-PROGRESS.md)
 for precise evidence boundaries, commands, and outstanding gates.
 <!-- CIAM_V10_SECURITY_CHECKPOINT_20261028_END -->
+
+<!-- CIAM_P008_P010_CHECKPOINT_START -->
+### P0.08–P0.10: OIDC journeys and approval-bound WSO2 TOTP
+
+The BFF now contains a **separate, target-bound WSO2 OIDC reauthentication** for
+case approval. It requires fresh signed TOTP assurance, same-subject verification,
+active WSO2 approval scope, and the original persistent case to remain open.
+The business ledger and tenant separation are preserved. Four mobile/web clients
+stay separate; Mobile is **browser-based preview**, not native.
+
+**Acceptance pending:** no success claim is made for live TOTP enrollment or
+approval until the WSO2 application MFA policy, token claim mappings and actual
+browser sequence are verified against the running 7.3 GA server. See
+[the P0.08–P0.10 implementation and gates](deploy/ciam-v10/P008-P010-IMPLEMENTATION.md).
+<!-- CIAM_P008_P010_CHECKPOINT_END -->
+
+<!-- CIAM_P008_P010_LIVE_CHECKPOINT_BEGIN -->
+### P0.08–P0.10 — Verified live WSO2 OIDC and seller TOTP approval (2026-10-28)
+
+**Positive journey passed in the local WSO2 7.3 GA proof of concept.** The
+operator-assisted Playwright runner reported
+`REAL_WSO2_E2E_VERIFIED_WITH_OPERATOR_INTERACTION` and exited zero. Its private,
+mode-0600 evidence passed the checkpoint's sanitized-evidence gate. The journey
+used separate Aurora and Brisa Web/Mobile Browser OIDC client registrations,
+verified ID-token subject binding and UserInfo, created an Aurora customer case,
+confirmed owner visibility and cross-brand denial, verified a separate seller
+review session, completed real WSO2 TOTP step-up, and read back `APPROVED` in
+both seller and customer views. The seller and customer were distinct identities.
+
+The signed step-up still requires the configured ACR, actual TOTP AMR, and fresh
+numeric `auth_time`; the BFF never infers MFA from an ACR request or token `iat`.
+Aurora Web and Mobile Browser use verified adaptive Basic + conditional TOTP
+policies; Brisa's Basic-only application sequences remain unchanged. Existing
+JSONL case persistence is preserved. The local BFF regression suite passed
+**112/112** and `./scripts/ciam-v10.sh test` passed in the same checkpoint.
+
+**Not yet established by this success run:** the full *live* negative matrix
+(cancel/stale MFA, callback replay, token revocation/expiry, outage,
+self-approval, per-client wrong-audience), SSO/logout behavior, and an
+independent audit-ledger readback. No production certification is implied.
+
+For the demonstration and evidence boundaries see
+[CIAM v10 security progress](deploy/ciam-v10/SECURITY-PROGRESS.md) and
+[P0.08–P0.10 implementation](deploy/ciam-v10/P008-P010-IMPLEMENTATION.md).
+Use an authorized operator and the existing private credential helper; never
+commit credentials, TOTP QR codes, token values, cookies or evidence JSON.
+<!-- CIAM_P008_P010_LIVE_CHECKPOINT_END -->

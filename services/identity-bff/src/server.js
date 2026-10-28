@@ -10,7 +10,10 @@ import { inspectAccessToken, requireAuthorityForClient } from './wso2-authority.
 import { verifyAndRecordBinding } from './binding-acceptance.js';
 import { liveApiDenial } from './live-api-policy.js';
 import { readVerifiedUserinfo } from './live-userinfo.js';
+import { readOidcUserinfoForClient } from './oidc-userinfo-p010.js';
 import { handleCases } from './live-cases-v4.js';
+import { beginApprovalChallenge, verifyApprovalResponse, totpPolicy } from './approval-stepup-p010.js';
+import { commitApprovedCase } from './case-approval-p010.js';
 
 // Zero-mock deployment: no preview mode, local entitlements, persona selection or consent ledger.
 if (process.env.IDENTITY_MODE !== 'live-wso2')
@@ -116,7 +119,12 @@ async function api(req, res, u, s) {
       : Promise.resolve({ http: 503, reason: 'cases_audience_not_configured' }),
     sameOrigin: request => request.headers.origin === appConfig.origin,
     safeCsrf: (request, session) => Boolean(request.headers['x-csrf-token']) &&
-      safeEqual(request.headers['x-csrf-token'], session.csrf)
+      safeEqual(request.headers['x-csrf-token'], session.csrf),
+    beginApproval: async ({ session, key, brand, caseId }) => {
+      const policy = totpPolicy();
+      const c = clients[key], doc = await discover(c.issuer);
+      return beginApprovalChallenge({session,key,brand,caseId,client:c,discovery:doc,policy});
+    }
   })) return;
   if (u.pathname === '/api/health' && req.method === 'GET')
     return reply(res, 200, { service: 'WSO2-live-identity-bff', status: 'UP' });
@@ -140,6 +148,19 @@ async function api(req, res, u, s) {
         federation: false, wso2RpLogoutVerified: false, delegatedAuthorizationVerified: false,
         mfaPolicyVerified: false }
     });
+  }
+  // First-party OIDC UserInfo is scoped to `openid`, not the independent
+  // `ciam:profile:read` business API permission. Live introspection must bind
+  // the access token to the signature-verified ID token subject before use.
+  if (u.pathname === '/api/oidc/userinfo') {
+    if (req.method !== 'GET') return reply(res, 405, {error:'method_not_allowed'});
+    const key=u.searchParams.get('client');
+    if (!key || !Object.hasOwn(clients,key)) return reply(res,400,{error:'invalid_client'});
+    const outcome=await readOidcUserinfoForClient({
+      login:s.logins[key],client:clients[key],inspect:inspectAccessToken,
+      discovery:discover,userinfo:readVerifiedUserinfo
+    });
+    return reply(res,outcome.status,outcome.body);
   }
   const brandProfile = /^\/api\/brands\/(aurora|brisa)\/profile$/.exec(u.pathname);
   if (u.pathname === '/api/protected/profile' || brandProfile) {
@@ -295,6 +316,30 @@ async function handle(req, res) {
           key, client: c, login: { verified: true, claims, accessToken: tokens.access_token }
         });
         if (!bound) return reply(res, 502, { error: 'wso2_identity_binding_not_verified' });
+      }
+      if (pending.kind === 'case-approval') {
+        // A different, one-use WSO2 transaction. State was consumed before token exchange.
+        // Never approve from old ID-token MFA claims, acr_values request or UI state.
+        try {
+          const proof = verifyApprovalResponse({session:s,pending,key,client:c,claims,policy:totpPolicy()});
+          const candidate = { verified:true, claims, accessToken:tokens.access_token };
+          const decision = await requireAuthorityForClient(
+            {logins:{[key]:candidate}},key,clients,'ciam:cases:approve',
+            process.env.WSO2_CASES_API_AUDIENCE);
+          if (decision.http !== 200)
+            return reply(res,decision.http,{error:decision.reason,allowed:false});
+          // UserInfo sub binding is mandatory even for the step-up callback.
+          await readVerifiedUserinfo({discovery:doc,issuer:c.issuer,
+            accessToken:tokens.access_token,subject:claims.sub});
+          commitApprovedCase({brand:proof.brand,caseId:proof.caseId,
+            issuer:proof.issuer,subject:proof.subject,authTime:proof.authTime});
+          s.logins[key] = {...candidate,verifiedAt:new Date().toISOString()};
+          sessionStore.rotate(s,res);
+          return redirect(res,`${proof.returnTo}?client=${encodeURIComponent(key)}&approval=check`);
+        } catch (e) {
+          // No success redirect and no business write after any failed assurance check.
+          return reply(res,e.status||403,{error:e.code||'wso2_stepup_not_verified',allowed:false,...(e.attestationGate?{attestationGate:e.attestationGate}:{})});
+        }
       }
       s.logins[key] = { claims, verified: true, accessToken: tokens.access_token,
         verifiedAt: new Date().toISOString() };

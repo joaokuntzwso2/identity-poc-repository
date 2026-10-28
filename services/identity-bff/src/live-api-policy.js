@@ -8,6 +8,7 @@ const EXPLICIT_LIVE_API_METHODS = Object.freeze({
   '/api/wso2-status': 'GET',
   '/api/identity/me': 'GET',
   '/api/protected/profile': 'GET',
+  '/api/oidc/userinfo': 'GET',
   '/api/logout': 'POST',
 });
 
