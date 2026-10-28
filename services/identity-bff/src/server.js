@@ -191,11 +191,21 @@ const STATIC = Object.freeze({
   '/live-identity-v2.css': 'live-identity-v2.css',
   '/portal/aurora': 'live-brand-v3.html',
   '/portal/brisa': 'live-brand-v3.html',
+  // CIAM_V5_LIVE_LAB: original Experience Center presentation, zero synthetic identity.
+  '/lab': 'live-experience-v5.html',
+  '/experience': 'live-experience-v5.html',
+  '/portal/aurora/web': 'live-experience-v5.html',
+  '/portal/aurora/mobile': 'live-experience-v5.html',
+  '/portal/brisa/web': 'live-experience-v5.html',
+  '/portal/brisa/mobile': 'live-experience-v5.html',
+  '/live-experience-v5.js': 'live-experience-v5.js',
+  '/live-experience-v5.css': 'live-experience-v5.css',
+  '/live-retail-v5.css': 'live-retail-v5.css',
   '/live-brand-v3.js': 'live-brand-v3.js',
   '/live-cases-v4-ui.js': 'live-cases-v4-ui.js',
   '/live-brand-v3.css': 'live-brand-v3.css',
   '/live-wso2-ui.js': 'live-wso2-ui.js',
-  '/': 'live-wso2.html',
+  '/': 'live-experience-v5.html',
   '/app/': 'live-wso2.html',
   '/app/index.html': 'live-wso2.html'
 });
@@ -212,9 +222,13 @@ async function serveStatic(u, res) {
   res.end(buf); return true;
 }
 function destination(key, asked) {
-  if (asked === '/identity-live-v2') return asked;
+  // CIAM_V5_RETURNTO: explicit local allowlist; never accept external or cross-brand URLs.
+  if (asked === '/identity-live-v2' || asked === '/lab' || asked === '/experience') return asked;
   const brand = clients[key].brand;
-  return asked === `/portal/${brand}` ? asked : '/';
+  if (asked === `/portal/${brand}`) return asked;
+  if (asked === `/portal/${brand}/web` && key === `${brand}-web`) return asked;
+  if (asked === `/portal/${brand}/mobile` && key === `${brand}-app`) return asked;
+  return '/lab';
 }
 async function handle(req, res) {
   const u = new URL(req.url, appConfig.origin);
