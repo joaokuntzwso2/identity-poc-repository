@@ -1,0 +1,86 @@
+{
+  "schema": "ciampoc.iam.real-identities.v1",
+  "people": [
+    {
+      "key": "customer-ana",
+      "username": "ana.costa",
+      "givenName": "Ana",
+      "familyName": "Costa",
+      "type": "customer",
+      "brands": [
+        "aurora",
+        "brisa"
+      ],
+      "email": "ana@identidade.example"
+    },
+    {
+      "key": "customer-rafael",
+      "username": "rafael.nunes",
+      "givenName": "Rafael",
+      "familyName": "Nunes",
+      "type": "customer",
+      "brands": [
+        "aurora"
+      ],
+      "email": "rafael@identidade.example"
+    },
+    {
+      "key": "seller-marcos",
+      "username": "marcos.oliveira",
+      "givenName": "Marcos",
+      "familyName": "Oliveira",
+      "type": "seller",
+      "brands": [
+        "aurora"
+      ],
+      "email": "marcos@parceiro.example"
+    },
+    {
+      "key": "admin-luiza",
+      "username": "luiza.ferreira",
+      "givenName": "Luiza",
+      "familyName": "Ferreira",
+      "type": "administrator",
+      "brands": [
+        "aurora",
+        "brisa"
+      ],
+      "email": "luiza@identidade.example"
+    },
+    {
+      "key": "attendant-pedro",
+      "username": "pedro.reis",
+      "givenName": "Pedro",
+      "familyName": "Reis",
+      "type": "attendant",
+      "brands": [
+        "aurora"
+      ],
+      "email": "pedro@atendimento.example"
+    },
+    {
+      "key": "analyst-camila",
+      "username": "camila.lima",
+      "givenName": "Camila",
+      "familyName": "Lima",
+      "type": "analyst",
+      "brands": [
+        "aurora",
+        "brisa"
+      ],
+      "email": "camila@identidade.example"
+    }
+  ],
+  "roleLabels": {
+    "customer": "Customer",
+    "seller": "Seller",
+    "administrator": "Business Administrator",
+    "attendant": "Attendant",
+    "analyst": "Security Analyst"
+  },
+  "implementedPermissionAssignments": {
+    "customer": [
+      "ciam:profile:read"
+    ]
+  }
+}

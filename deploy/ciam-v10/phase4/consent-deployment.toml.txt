@@ -1,0 +1,14 @@
+# WSO2 IS 7.3 ONLY AFTER CONFIRMED UPDATE LEVEL >= 7.3.0.12.
+# Merge with current deployment.toml; do not replace the file.
+[consent_mgt]
+enable_v2_api = true
+
+[console.flows.scopes]
+read = ["internal_flow_view", "internal_governance_view", "internal_consent_mgt_purpose_view"]
+
+# Optional: enable only if webhooks will be used and the event destination is secured.
+# [identity_mgt.events.schemes]
+# ConsentEventHook.properties.enable = true
+# ConsentPurposeEventHook.properties.enable = true
+# [webhooks.event_profiles]
+# disabled_channels = []

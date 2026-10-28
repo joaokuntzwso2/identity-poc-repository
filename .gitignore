@@ -305,3 +305,22 @@ docs/IDENTITY_OPERATOR_RUNBOOK.md
 /iamctl.json
 /init.json__pycache__/
 *.py[cod]
+
+# CIAM_V10_PRIVATE_RUNTIME_2026_10_28_START
+# Never commit local WSO2 secrets, private bootstrap journals, token diagnostics,
+# mutable business data, PID files, or installer backups.
+private/
+*.private.json
+*.backup-*
+*.bak
+*.bak.*
+*.jsonl
+*.pid
+*.log
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.DS_Store
+# CIAM_V10_PRIVATE_RUNTIME_2026_10_28_END

@@ -1,0 +1,29 @@
+{
+  "schema": "ciampoc.real-iam.phase4.v1",
+  "businessApi": {
+    "name": "CIAM Service Requests API",
+    "identifier": "urn:ciampoc:service-requests:v1",
+    "description": "Real persistent customer service request workflow; not retail order fulfillment",
+    "scopes": [
+      {"name": "ciam:cases:create", "displayName": "Create own service request"},
+      {"name": "ciam:cases:read", "displayName": "Read permitted service requests"},
+      {"name": "ciam:cases:review", "displayName": "Review all brand service requests"},
+      {"name": "ciam:cases:approve", "displayName": "Approve a brand service request"}
+    ],
+    "rolePermissions": {
+      "customer": ["ciam:cases:create", "ciam:cases:read"],
+      "seller": ["ciam:cases:read", "ciam:cases:review", "ciam:cases:approve"],
+      "administrator": ["ciam:cases:read", "ciam:cases:review", "ciam:cases:approve"]
+    }
+  },
+  "b2b": {
+    "brand": "aurora",
+    "organizations": [
+      {"name": "Aurora Partner Alpha", "orgHandle": "aurora-partner-alpha", "description": "Demo partner administered in WSO2"}
+    ],
+    "userToShare": "admin-luiza"
+  },
+  "mfa": {"requiredAmr": "totp", "maxAuthAgeSeconds": 300},
+  "oidc": {"scopes": ["openid", "profile", "email", "ciam:profile:read"]},
+  "consent": {"minimumUpdateLevel": 12, "requiresV2Enabled": true}
+}

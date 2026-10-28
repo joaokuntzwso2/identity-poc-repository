@@ -1,0 +1,15 @@
+<section class="panel" id="real-business-cases" aria-labelledby="real-business-title">
+ <p class="eyebrow">SERVIÇOS REAIS · AUTORIZAÇÃO WSO2</p>
+ <h2 id="real-business-title">Solicitações à marca</h2>
+ <p>Solicitações são registradas de forma persistente. Os escopos vêm do WSO2. A aprovação exige permissão específica e TOTP recente no ID token verificado; sem ambos, será negada.</p>
+ <label class="control" for="case-title">Assunto da solicitação</label>
+ <input id="case-title" maxlength="120" placeholder="Assunto" />
+ <label class="control" for="case-description">Descrição</label>
+ <textarea id="case-description" maxlength="1000" rows="3" placeholder="O que você precisa?"></textarea>
+ <div class="toolbar"><button id="case-open" disabled>Criar solicitação</button><button id="case-refresh" class="ghost" disabled>Consultar solicitações</button></div>
+ <label class="control" for="case-id">Identificador da solicitação a aprovar (UUID)</label>
+ <input id="case-id" placeholder="UUID" />
+ <button id="case-approve" disabled>Autorizar com MFA verificada</button>
+ <ul id="case-list" aria-live="polite"></ul>
+ <p id="case-out" role="status" class="footnote">Aguardando autenticação...</p>
+</section>

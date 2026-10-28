@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Portal de identidade conectado ao WSO2 Identity Server 7.3">
+  <title>Portal de identidade | WSO2 IS 7.3</title>
+  <link rel="stylesheet" href="/live-brand-v3.css">
+  <script defer src="/live-brand-v3.js"></script>
+  <script defer src="/live-cases-v4-ui.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <a class="wordmark" id="brand-home" href="/portal/aurora">AURORA</a>
+      <nav aria-label="Marcas">
+        <a href="/portal/aurora" id="aurora-link">Aurora</a>
+        <a href="/portal/brisa" id="brisa-link">Brisa</a>
+        <a href="/identity-live-v2">Identity Lab</a>
+      </nav>
+    </header>
+    <section class="hero">
+      <div><p class="eyebrow">IDENTIDADE DIGITAL · WSO2 IS 7.3</p>
+        <h1 id="title">Sua conta, sob seu controle.</h1>
+        <p id="intro">Dados de identidade e permissões obtidos do WSO2, sem perfis ou papéis simulados.</p>
+        <div class="toolbar">
+          <button id="login-web" type="button">Entrar com WSO2 Web</button>
+          <button id="login-app" class="ghost" type="button">Entrar com WSO2 App</button>
+          <button id="refresh" class="ghost" type="button">Atualizar</button>
+          <button id="logout" class="ghost" type="button" disabled>Encerrar sessão BFF</button>
+        </div>
+        <p class="status" id="status" role="status">Consultando WSO2...</p>
+      </div>
+      <aside class="signal"><span class="signal-dot"></span><small>FONTE DE VERDADE</small><strong>WSO2 Identity Server</strong><p>O acesso é verificado no BFF a cada operação protegida.</p></aside>
+    </section>
+    <section class="metrics" aria-label="Verificações de identidade">
+      <article><small>SESSÃO</small><strong id="session-state">Consultando</strong><span id="session-source">Aguardando WSO2</span></article>
+      <article><small>ESCOPO DA API</small><strong id="scope-state">Não verificado</strong><span>ciam:profile:read</span></article>
+      <article><small>ISOLAMENTO</small><strong id="tenant-state">Por marca</strong><span>Issuer e audience específicos</span></article>
+    </section>
+    <section class="columns">
+      <article class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">CONTA</p><h2>Perfil confirmado</h2></div><span class="pill" id="profile-pill">Não consultado</span></div>
+        <p>O conteúdo abaixo vem do <code>/oauth2/userinfo</code> do tenant, depois da autorização no BFF.</p>
+        <label class="control" for="channel">Canal autenticado</label>
+        <select id="channel"><option value="">Nenhuma sessão verificada</option></select>
+        <button id="profile-read" type="button" disabled>Consultar perfil no WSO2</button>
+        <dl id="attributes" class="attributes"><dt>Perfil</dt><dd>Faça login para consultar.</dd></dl>
+        <p id="profile-result" class="footnote" aria-live="polite"></p>
+      </article>
+      <article class="panel">
+        <div class="panel-heading"><div><p class="eyebrow">AUTORIZAÇÃO</p><h2>Escopos e papéis</h2></div></div>
+        <p>Escopos de acesso vêm da introspecção. Papéis são mostrados apenas se o ID token verificado trouxer explicitamente o claim <code>roles</code>.</p>
+        <div class="information"><small>SCOPES DA SESSÃO</small><p id="scopes">Nenhum scope ativo</p></div>
+        <div class="information"><small>PAPÉIS (ID TOKEN WSO2)</small><p id="roles">Não informados pelo WSO2</p></div>
+        <p id="auth-proof" class="footnote">Nenhuma permissão é inferida de nomes, e-mails ou personas.</p>
+      </article>
+    </section>
+    <section class="panel safety">
+      <p class="eyebrow">SEGURANÇA DA CONTA</p><h2>Proteções sem simulação</h2>
+      <p>A autenticação está delegada ao WSO2. A gestão de credenciais e fatores ocorre no My Account do Identity Server. A prova de MFA depende de uma política real configurada e de uma autenticação com essa política; não há botão de “MFA aprovado” local.</p>
+      <a id="myaccount" href="https://localhost:9444/myaccount" rel="noreferrer">Abrir WSO2 My Account</a>
+      <p class="footnote" id="assurance">Nenhuma evidência de MFA verificada nesta sessão.</p>
+    </section>
+    <section class="panel" id="real-business-cases" aria-labelledby="real-business-title">
+ <p class="eyebrow">SERVIÇOS REAIS · AUTORIZAÇÃO WSO2</p>
+ <h2 id="real-business-title">Solicitações à marca</h2>
+ <p>Solicitações são registradas de forma persistente. Os escopos vêm do WSO2. A aprovação exige permissão específica e TOTP recente no ID token verificado; sem ambos, será negada.</p>
+ <label class="control" for="case-title">Assunto da solicitação</label>
+ <input id="case-title" maxlength="120" placeholder="Assunto" />
+ <label class="control" for="case-description">Descrição</label>
+ <textarea id="case-description" maxlength="1000" rows="3" placeholder="O que você precisa?"></textarea>
+ <div class="toolbar"><button id="case-open" disabled>Criar solicitação</button><button id="case-refresh" class="ghost" disabled>Consultar solicitações</button></div>
+ <label class="control" for="case-id">Identificador da solicitação a aprovar (UUID)</label>
+ <input id="case-id" placeholder="UUID" />
+ <button id="case-approve" disabled>Autorizar com MFA verificada</button>
+ <ul id="case-list" aria-live="polite"></ul>
+ <p id="case-out" role="status" class="footnote">Aguardando autenticação...</p>
+</section>
+
+    <section class="panel unavailable">
+      <p class="eyebrow">CAPACIDADES EM IMPLANTAÇÃO</p><h2>Jornadas ainda não integradas</h2>
+      <p>Pedidos e checkout precisam de uma base transacional; B2B exige organizações e delegação provisionadas; consentimento de preferências exige APIs e políticas persistentes; funcionalidades de agentes precisam de autorização delegada real. Nenhuma delas permite simular sucesso neste portal.</p>
+      <p class="footnote">O encerramento de sessão BFF não é prova de encerramento do SSO no WSO2 nem de revogação do token.</p>
+    </section>
+    <footer>Identidades e permissões são verificadas contra WSO2. Dados comerciais inexistentes não são exibidos como reais.</footer>
+  </main>
+</body>
+</html>

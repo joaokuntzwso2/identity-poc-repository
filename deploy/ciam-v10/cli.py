@@ -24,6 +24,7 @@ PRIVATE = ROOT / 'private'
 OIDC = HERE / 'oidc/bootstrap.py'
 RESOURCES = HERE / 'resources/bootstrap.py'
 AUTHORITY = HERE / 'authority/bootstrap.py'
+IDENTITIES = HERE / 'identities/bootstrap.py'
 INTROSPECTION = HERE / 'server/introspection_maintenance.py'
 TENANTS = HERE / 'tenants/provision.py'
 PROJECT = 'wso2-ciam-v10'
@@ -150,6 +151,12 @@ def bootstrap_all():
         run([sys.executable,script,'apply'],env=env)
     auth_report=automation.authorization_pipeline(AUTHORITY,ROOT,os.environ.copy())
     output(auth_report)
+    # No person/role may appear in a portal until WSO2 owns it and readback passes.
+    seed_env = os.environ.copy()
+    seed_env['WSO2_CIAM_V10_IDENTITIES_CONFIRM'] = 'CREATE_DEMO_PEOPLE_AND_APP_ROLES'
+    run([sys.executable, IDENTITIES, 'plan'])
+    run([sys.executable, IDENTITIES, 'apply'], env=seed_env)
+    run([sys.executable, IDENTITIES, 'verify'])
     # The BFF bridge must run AFTER the authority journal and WSO2 readback;
     # only then can it request the real ciam:profile:read scope.
     run([sys.executable,OIDC,'bridge-bff','--repo',REPO])
