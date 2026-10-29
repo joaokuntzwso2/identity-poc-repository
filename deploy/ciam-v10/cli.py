@@ -206,14 +206,14 @@ def main():
     if len(sys.argv)!=2:raise Stop('USAGE: scripts/ciam-v10.sh COMMAND')
     command=sys.argv[1]
     # P011_P012_ROUTER_V1: separate additive commands, existing v10 commands unchanged.
-    if command in ('offline-test','security-audit','inventory','readiness','live-acceptance','provision-plan','provision-apply'):
+    if command in ('offline-test','security-audit','inventory','readiness','live-acceptance','live-negative','provision-plan','provision-apply'):
         p=subprocess.run([sys.executable,HERE/'p011_p012/cli.py',command],cwd=REPO,check=False)
         raise SystemExit(p.returncode)
     if command=='help':
         output({'commands':['fresh','fresh-bootstrap','bootstrap','status','bff-diagnose','bff-start','bff-clear-stale','test',
                            'authority-preflight','authority-evidence','authorization-plan','authorization-apply','authorization-reconcile',
                            'consent-verify','consent-plan','consent-apply','authority-status','runtime-acceptance','bff-runtime-plan','bff-restart',
-                            'offline-test','security-audit','inventory','readiness','live-acceptance','provision-plan','provision-apply',
+                            'offline-test','security-audit','inventory','readiness','live-acceptance','live-negative','provision-plan','provision-apply',
                              'introspection-plan','introspection-stage','introspection-restart','introspection-status'],
                 'writeConfirmation':{'authorization-apply':'WSO2_CIAM_V10_AUTHORITY_CONFIRM=AUTHORIZE_EXISTING_V10_OIDC_AND_ASSIGN_SCIM_USERS'},
                 'safety':'Consent apply refuses until feature and API contract verified',

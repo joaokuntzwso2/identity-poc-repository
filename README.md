@@ -3115,3 +3115,16 @@ codes, tokens or cookies**. See
 These new checks require a fresh source/runtime-pinned browser run; the previous
 live attestation cannot prove them. The mandatory full matrix and original
 provisioning-ownership journal remain `BLOCKED` until independently proven.
+
+### P0.11 additional guarded live-negative scenarios (v32)
+
+The existing `./scripts/ciam-v10.sh live-negative` command executes one real,
+explicitly approved Playwright test at a time: provider-canceled MFA,
+self-approval (only with a verified existing dual-role identity), natural BFF
+session expiry, or expired step-up authorization state. New tests cannot pass
+from mock or static data. Cases are persistent and no WSO2 writes are made by
+the installer. The outstanding stale *signed* MFA, token revocation, global
+SSO logout and controlled WSO2 outage tests remain BLOCKED until independently
+executable and authorized. See
+[`docs/CIAM_P011_P012_SECURITY_RUNNER_V32.md`](docs/CIAM_P011_P012_SECURITY_RUNNER_V32.md)
+for exact approved commands, evidence provenance and recovery.

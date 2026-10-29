@@ -19,12 +19,13 @@ import sys
 import urllib.error
 import urllib.request
 if __package__:
-    from . import core, live_checks, live_denials, live_security
+    from . import core, live_checks, live_denials, live_security, live_remaining
 else:
     import core
     import live_checks
     import live_denials
     import live_security
+    import live_remaining
 
 REPO=Path(__file__).resolve().parents[3]
 HOME=Path(os.environ.get('CIAM_V10_HOME',str(Path.home()/'wso2-ciam-v10'))).expanduser()
@@ -34,7 +35,7 @@ CLI=REPO/'deploy/ciam-v10/cli.py'
 AUTHORITY=REPO/'deploy/ciam-v10/authority/bootstrap.py'
 P010_DRIVER=REPO/'scripts/ciam-p010-interactive-acceptance.mjs'
 P010_PREFLIGHT=REPO/'scripts/ciam-p008-p010-preflight.mjs'
-COMMANDS=('offline-test','security-audit','inventory','readiness','live-acceptance','provision-plan','provision-apply')
+COMMANDS=('offline-test','security-audit','inventory','readiness','live-acceptance','live-negative','provision-plan','provision-apply')
 
 class Refuse(Exception):pass
 
@@ -61,7 +62,9 @@ def offline_test():
         'EXISTING_V10_PYTHON_UNIT':summary_run([sys.executable,CLI,'test'],timeout=200),
         'P010_BROWSER_DRIVER_SYNTAX_STATIC':summary_run(['node','--check','scripts/ciam-p010-interactive-acceptance.mjs'],timeout=30),
         'P011_CASE_NEGATIVE_CONTRACT_UNIT':summary_run(['node','--test','scripts/ciam-p011-negative-observations.test.mjs'],timeout=30),
-        'P011_LIVE_SECURITY_CONTRACT_UNIT':summary_run(['node','--test','scripts/ciam-p011-live-security.test.mjs'],timeout=30)
+        'P011_LIVE_SECURITY_CONTRACT_UNIT':summary_run(['node','--test','scripts/ciam-p011-live-security.test.mjs'],timeout=30),
+        'P011_REMAINING_NEGATIVE_CONTRACT_UNIT':summary_run(['node','--test','scripts/ciam-p011-remaining-contract.test.mjs'],timeout=30),
+        'P011_REMAINING_BROWSER_SYNTAX':summary_run(['node','--check','scripts/ciam-p011-remaining-scenarios.mjs'],timeout=30)
     }
     # Existing Python/Node tests may use local doubles; they do not prove live authentication.
     status='NOT_READY' if any(x['status']=='FAIL' for x in checks.values()) else 'BLOCKED' if any(x['status']=='BLOCKED' for x in checks.values()) else 'READY'
@@ -298,9 +301,13 @@ def report(inventory_only=False):
             except (NameError,AttributeError,TypeError):pass
         for gate_id,status,expected,reason,kind in live_security.assess(security_evidence,live_ok):
             gates.append(core.gate(gate_id,status,kind,expected,reason))
-        for gate_id,status,expected,reason,kind in live_security.deferred():
+        # Additional real operator-run scenarios require a separate checksum-pinned
+        # attestation. A happy-path P010 browser run cannot pass any of these.
+        for gate_id,status,expected,reason,kind in live_remaining.evaluate(
+                INSPECTION,sha,rt,core.utc_now()):
             gates.append(core.gate(gate_id,status,kind,expected,reason))
-        # More real business denials, but still not canceled MFA, replay, revocation or SSO/logout.
+        # Even after more real scenario evidence, provider revocation, signed MFA freshness,
+        # global logout and outage remain mandatory and independently blocked.
         gates.append(core.gate('FULL_LIVE_NEGATIVE_MATRIX','BLOCKED','LIVE_AUTHENTICATION',
                 'stale/canceled MFA, token revocation, self-approval, global SSO/logout, expiry and controlled outage verified live',
                 'MANDATORY_LIVE_SECURITY_SCENARIOS_STILL_UNATTESTED'))
@@ -376,6 +383,52 @@ def security_audit():
     print(json.dumps({'outcome':'NOT_READY' if a['status']=='FAIL' else 'READY','trackedFindings':a['trackedIssues'],
                       'inspectionFindings':a['evidenceIssues'],'inspectionAvailable':a['inspectionAvailable']},indent=2))
     return 2 if a['status']=='FAIL' else 0
+
+def live_negative():
+    """Run one explicitly authorized real browser scenario and attest its output."""
+    scenario=os.environ.get('CIAM_P011_NEGATIVE_SCENARIO','')
+    if scenario not in live_remaining.ALLOWED:raise Refuse('SUPPORTED_NEGATIVE_SCENARIO_REQUIRED')
+    if os.environ.get('CIAM_P011_SECURITY_CONFIRM')!='RUN_THIS_LIVE_SECURITY_SCENARIO':
+        raise Refuse('EXPLICIT_NEGATIVE_SCENARIO_APPROVAL_REQUIRED')
+    if scenario!='expired-session' and os.environ.get('CIAM_P011_CASE_WRITE_CONFIRM')!='CREATE_ONE_PERSISTENT_SECURITY_TEST_CASE':
+        raise Refuse('EXPLICIT_PERSISTENT_CASE_FIXTURE_APPROVAL_REQUIRED')
+    if HOME.resolve()!=(Path.home()/'wso2-ciam-v10').resolve():
+        raise Refuse('BROWSER_REQUIRES_DEFAULT_PRIVATE_HOME')
+    sha,dirty=core.source_identity(REPO)
+    if dirty:raise Refuse('DIRTY_WORKTREE_REFUSE_LIVE_PROVENANCE')
+    rt=runtime_id()
+    if not rt:raise Refuse('RUNTIME_IDENTITY_NOT_VERIFIED')
+    ok,reason=preflight()
+    if not ok:raise Refuse(reason)
+    core.private_directory(INSPECTION)
+    before=set(INSPECTION.glob('p011-live-negative-v32-*.json'))
+    env=dict(os.environ,CIAM_P011_SOURCE_SHA=sha,CIAM_P011_RUNTIME_ID=rt)
+    # The idle-expiry test intentionally waits longer than the BFF's genuine
+    # 60-minute sliding TTL, without making a request that refreshes it.
+    timeout=4200 if scenario=='expired-session' else 1000
+    result=execute(['node',REPO/'scripts/ciam-p011-remaining-scenarios.mjs',scenario],timeout=timeout,env=env)
+    after=set(INSPECTION.glob('p011-live-negative-v32-*.json'))-before
+    if len(after)!=1:raise Refuse('SCENARIO_EVIDENCE_MISSING_OR_AMBIGUOUS')
+    p=next(iter(after));raw=core.read_private(p)
+    if core.issues_in_text(raw.decode('utf-8','replace'),p.name):raise Refuse('SCENARIO_SECRET_AUDIT_FAILED')
+    try:obj=json.loads(raw)
+    except (ValueError,TypeError):raise Refuse('SCENARIO_REPORT_INVALID') from None
+    if not result or result.returncode!=0 or not live_remaining.valid_observation(
+          obj,scenario,sha,rt,core.utc_now()):
+        raise Refuse('REAL_SCENARIO_NOT_ATTESTED_INSPECT_PRIVATE_REPORT')
+    if core.source_identity(REPO)!=(sha,False) or runtime_id()!=rt:
+        raise Refuse('SOURCE_OR_RUNTIME_CHANGED_DURING_LIVE_SCENARIO')
+    row=core.evidence(live_remaining.ALLOWED[scenario],
+       'Real operator-assisted live negative browser scenario',sha,'local-v10',rt,
+       'LIVE_AUTHENTICATION','PASS','real live boundary denial',
+       'EXACT_SOURCE_RUNTIME_BROWSER_RESULT_VERIFIED',
+       tenant='aurora.identity.test',client='aurora-web',
+       references=[{'artifact':p.name,'sha256':core.digest(raw)}])
+    target=core.private_write(INSPECTION,'p011-security-attested',row)
+    print(json.dumps({'outcome':'PASS','gate':live_remaining.ALLOWED[scenario],
+       'sourceGitSha':sha,'evidenceClass':'LIVE_AUTHENTICATION',
+       'attestation':str(target),'scope':'ONE_REAL_SCENARIO_ONLY_NOT_FULL_MATRIX'},indent=2))
+    return 0
 
 def live_acceptance():
     if os.environ.get('CIAM_P011_LIVE_CONFIRM')!='INTERACTIVE_WSO2_AND_PERSISTENT_CASE_WRITE':
@@ -492,7 +545,7 @@ def main(argv=None):
         raise Refuse('USAGE: '+', '.join(COMMANDS))
     return {'offline-test':offline_test,'security-audit':security_audit,
         'inventory':lambda:report(inventory_only=True),'readiness':report,
-        'live-acceptance':live_acceptance,'provision-plan':provision_plan,
+        'live-acceptance':live_acceptance,'live-negative':live_negative,'provision-plan':provision_plan,
         'provision-apply':provision_apply}[args[0]]()
 
 if __name__=='__main__':
