@@ -3128,3 +3128,36 @@ SSO logout and controlled WSO2 outage tests remain BLOCKED until independently
 executable and authorized. See
 [`docs/CIAM_P011_P012_SECURITY_RUNNER_V32.md`](docs/CIAM_P011_P012_SECURITY_RUNNER_V32.md)
 for exact approved commands, evidence provenance and recovery.
+
+## P1.13–P1.16 — live CIAM Experience Center, revision dfcb3bf
+
+The primary guided Experience Center is the BFF-served v5 application at `/`, `/lab`, and `/experience`. Four independent registered browser OIDC clients remain mapped to `/portal/aurora/web` (`aurora-web`), `/portal/aurora/mobile` (`aurora-app`), `/portal/brisa/web` (`brisa-web`) and `/portal/brisa/mobile` (`brisa-app`). Mobile means **responsive browser**, not native app. Legacy `/portal/aurora` and `/portal/brisa`, `/app` and the React preview are preserved but not promoted as canonical authentication experiences.
+
+The seller approval flow **reuses existing P0.10** `beginApprovalChallenge` / `verifyApprovalResponse` / `commitApprovedCase` through the 202 `WSO2_TOTP_STEP_UP_REQUIRED` response and a transaction-bound, one-time OIDC callback. It does not use the previous P1 patch's proposed `stepUp=totp` route. The callback now returns `caseId` only so that the UI can verify the resulting record after reading the real API. Only an APPROVED record with an `approved` persisted history event is displayed as a confirmed success. No local persona switch, frontend entitlement or mock MFA is introduced.
+
+The case JSONL event store is unchanged; its materialized read API gains an additive `history` array (`action`, `at`) that is compatible with future PostgreSQL event tables. The interface uses selected-record actions rather than copying UUIDs. Server-side scope checks, issuer/client binding, brand isolation, ownership, CSRF, separate subject proof and MFA policies remain the authority. The UI never confirms an operation solely from browser navigation, token claims or an authorization URL.
+
+A presenter guide explains customer → request → logout/login as actual seller → authorized queue → one-time WSO2 TOTP → persisted approval readback. Admin, attendant, analyst, consent API v2, delegation and global WSO2 SSO logout remain explicitly limited unless separately implemented and tested.
+
+**Local release gate:** `npm test`, `npm run build`, `npm run check` (where defined), `node --test services/identity-bff/test/p1-cases-history.test.js`; run Playwright only against an actual running BFF with `CIAM_E2E_BASE_URL`. Test all four OIDC logins, 401/403/409/503, own-vs-seller queue, CSRF, cross-brand access, expired sessions, failed and successful genuine TOTP, readback after redirect, responsive 390/768/1440 layouts, keyboard, axe and visual screenshots. Live assurance/credential tests and accessibility results were **not** run by the patch preparer. Do not claim full Definition of Done before those pass. Do not push without authorization.
+
+<!-- P1.13-16_DURABLE_V10_STARTUP -->
+## P1.13–P1.16 — Durable local WSO2 v10 startup
+
+The canonical **local** `npm run start:bff` now invokes `scripts/ciam-live-start.mjs`, not the raw server entry point. The launcher is deliberately restricted to this verified laptop setup. It validates the current P1/logout source, four separate Aurora/Brisa v10 OIDC clients, the v10 **private** manifest (`var/wso2/identity-bff-v10.private.json`, owner-only `0600`), exact callback origin `http://127.0.0.1:4400`, and the four live OAuth registrations in WSO2 PostgreSQL (read-only SELECT), the trusted `localhost` WSO2 PEM certificate at `~/.config/ciam/wso2-local.pem`.
+
+The runtime sets `IDENTITY_MODE=live-wso2`, `PORT=4400`, `PUBLIC_ORIGIN=http://127.0.0.1:4400`, `ALLOW_INSECURE_LOCAL=true` (loopback only, refused when `NODE_ENV=production`), `NODE_EXTRA_CA_CERTS`, `WSO2_CASES_API_AUDIENCE=urn:ciampoc:service-requests:v1`, `WSO2_CASES_SCOPES_ENABLED=1`, `WSO2_TOTP_STEPUP_ACR=urn:ciampoc:assurance:totp:v1`, `WSO2_TOTP_STEPUP_AMR=totp`, and an **absolute** `CIAM_BUSINESS_DATA_DIR=$REPO/var/ciam-business-data`. The runtime preserves any separately configured `WSO2_BUSINESS_API_AUDIENCE` and additional private introspection settings; it does **not** invent a profile audience.
+
+The launcher does not reset data, rotate credentials, run preview identities, change permissions, or write to the WSO2 identity database. It fails closed if WSO2 Identity Server or the PostgreSQL audit container is unavailable, if the registered client IDs have changed after bootstrap, if another ledger is detected elsewhere under `var`, if private manifest permissions are unsafe, if expected patches are missing, or if the certificates cannot be validated. It does not stop port listeners. The containerized WSO2 Identity Server must already be running on `https://localhost:9444` and serving both tenants. Bootstrap processes that replace the WSO2 database, re-register clients, or rotate the certificate/issuer require **separate reconciliation** and are not automatically repaired by the launcher.
+
+```bash
+npm run ciam:preflight   # read-only preflight, does not bind a port
+npm run start:bff        # run the canonical BFF with all verified P1 runtime flags
+npm run ciam:registrations # read-only WSO2 client-ID/tenant/discovery audit
+npm run ciam:smoke       # read-only live health + four-client discovery
+npm test
+npm run build
+```
+
+The startup script is intentionally used only for the **local development demonstration**; production deployment must use HTTPS, deployment-managed secrets and durable storage. If the old React preview build is missing its historical `personas.json`, the installer restores that fixture from Git commit `6d37d3a` without enabling preview identity in the live BFF. The restored preview fixture must be reviewed and committed to keep subsequent builds reproducible. Existing uncommitted changes and private journals are not touched by this bootstrap patch. Do not commit `var/wso2/` files, the certificate, or the business ledgers. Keep the successful customer→seller→WSO2 TOTP→persisted approval as a separate manual real-session acceptance test; the smoke test does not prove it.
+<!-- /P1.13-16_DURABLE_V10_STARTUP -->

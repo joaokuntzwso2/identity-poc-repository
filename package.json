@@ -9,7 +9,10 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @poc/experience-center",
-    "start:bff": "node services/identity-bff/src/server.js",
+    "start:bff": "node scripts/ciam-live-start.mjs",
+    "ciam:preflight": "node scripts/ciam-live-start.mjs --check",
+    "ciam:smoke": "node scripts/ciam-live-smoke.mjs",
+    "ciam:registrations": "python3 scripts/ciam-live-registrations.py",
     "test": "node --test services/identity-bff/test/*.test.js",
     "check": "npm test && node scripts/preflight.mjs",
     "build": "npm run build --workspace @poc/experience-center",
