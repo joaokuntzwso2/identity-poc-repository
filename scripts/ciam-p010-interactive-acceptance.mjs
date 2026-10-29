@@ -6,6 +6,7 @@ import { chromium } from '@playwright/test';
 import { fetchLocalWso2BrowserPin, chromiumPinnedTlsArgs } from './ciam-p010-local-cert-pin.mjs';
 import { safeFailureCode, classifyBrowserLocation, waitForPortalReturn } from './ciam-p010-browser-progress.mjs';
 import { assertCaseDenial, caseNegativeMatrix } from './ciam-p011-negative-observations.mjs';
+import { observedCallbackIsLocal, replayConsumedCallback, denyUnsolicitedCallback, observeBffLogout } from './ciam-p011-live-security.mjs';
 import { mkdir, writeFile, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -20,7 +21,7 @@ const url=new URL(base);if(!['127.0.0.1','localhost'].includes(url.hostname)||ur
  throw Error('ONLY_LOCAL_V10_BFF_SUPPORTED');
 const evidence={schema:'ciam-p010.live-acceptance.v1',at:new Date().toISOString(),status:'INCOMPLETE',
   browserDriven:true,credentialsSaved:false,tokenOrCookieDataSaved:false,mfaOperatorInteractionRequired:true,
-  clients:{},cases:{},denials:{}};
+  clients:{},cases:{},denials:{},security:{}};
 let browser; let activeStage='BROWSER_SETUP'; let activeClient=null; let activePage=null;
 function record(client,me){const p=me.clients?.[client];return {
  issuerTenant:p?.issuer?.includes('/t/aurora.identity.test/')?'aurora':p?.issuer?.includes('/t/brisa.identity.test/')?'brisa':'UNVERIFIED',
@@ -38,6 +39,12 @@ async function authenticate(key,brand,channel,note,evidenceKey=key){
  activeStage='LOGIN_'+key.toUpperCase().replaceAll('-', '_'); activeClient=key;
  const context=await browser.newContext({ignoreHTTPSErrors:false,acceptDownloads:false});
  const page=await context.newPage(); activePage=page;
+ // Capture the genuine one-use callback URL in memory only; never persist code/state.
+ let consumedCallback=null;
+ page.on('request', request => {
+   if (key==='aurora-web' && evidenceKey===key && request.method()==='GET' &&
+       observedCallbackIsLocal(request.url(),base,key)) consumedCallback=request.url();
+ });
  const portal=`/portal/${brand}/${channel}`;
  await page.goto(`${base}/auth/${channel==='mobile'?brand+'-mobile':key}/login?returnTo=${encodeURIComponent(portal)}`);
  const redirected=new URL(page.url());
@@ -59,7 +66,7 @@ async function authenticate(key,brand,channel,note,evidenceKey=key){
  }
  info.userInfoVerified=true;info.userInfoHttp=profile.status;
  if(evidenceKey===key) evidence.clients[key]=info; else evidence.seller=info;
- return {context,page,me:me.body};
+ return {context,page,me:me.body,consumedCallback};
 }
 async function writeEvidence(){
  const dir=join(homedir(),'wso2-ciam-v10','inspection');await mkdir(dir,{recursive:true,mode:0o700});
@@ -74,6 +81,10 @@ try{
    certFingerprintSha256:pinInfo.certificateFingerprintSha256};
  browser=await chromium.launch({headless:false,args:chromiumPinnedTlsArgs(pinInfo)});
  const customer=await authenticate('aurora-web','aurora','web','AURORA CUSTOMER');
+ // Actual callback replay with the same browser's authenticated cookie context.
+ // An unavailable probe is recorded as null and cannot earn a readiness PASS.
+ evidence.security.callbackReplayHttp=await replayConsumedCallback(customer.context,customer.consumedCallback,base);
+ evidence.security.unsolicitedCallbackHttp=await denyUnsolicitedCallback(customer.context,base);
  activeStage='CASES_CUSTOMER_CREATE';
  const customerRead=evidence.clients['aurora-web'];
  if(!customerRead.scopes.includes('ciam:cases:create')||!customerRead.scopes.includes('ciam:cases:read'))
@@ -158,6 +169,10 @@ try{
    `/api/brands/aurora/cases/${caseId}/approve?client=aurora-web`);
  assertCaseDenial(evidence.denials,'duplicateApprovalHttp',duplicate.status);
  if(!caseNegativeMatrix(evidence.denials))throw Error('INCOMPLETE_NEGATIVE_CASE_MATRIX');
+ activeStage='LIVE_BFF_LOGOUT_ISOLATION';
+ // After all business readbacks: logout destroys only the customer BFF session.
+ // The seller session must remain independent; global WSO2 SSO logout is NOT claimed.
+ evidence.security={...evidence.security,...await observeBffLogout(customer.page,seller.page)};
  activeStage='CASES_APPROVAL_OWNER_READBACK';
  evidence.status='PASS_REAL_WSO2_FOUR_CLIENTS_AND_TOTP_APPROVAL';
  console.log('REAL_WSO2_E2E_VERIFIED_WITH_OPERATOR_INTERACTION');

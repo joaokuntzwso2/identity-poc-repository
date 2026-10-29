@@ -151,3 +151,57 @@ or stale MFA, token revocation, SSO/logout, and service outage acceptance
 remain unimplemented, and the missing original Cases ownership journal is
 not recovered or substituted by these additions. The new business ledger
 checks require a fresh successful browser run and the exact case UUID.
+
+## Increment v31: live callback and BFF-session boundary checks
+
+These tests **extend** (never replace) P010's real WSO2/OIDC/TOTP browser
+journey. They run only after the operator separately approves the persistent
+case creation via `live-acceptance` and completes genuine browser login/MFA.
+
+* `LIVE_CALLBACK_REPLAY_DENIAL` (`400`): Playwright captures the successful
+  Aurora Web OIDC callback **in process memory only**, then replays the exact
+  consumed authorization response once with the **same browser cookie context**.
+  No code, state, callback URL, cookies or response bodies enter evidence.
+* `LIVE_UNISSUED_STATE_DENIAL` (`400`): sends a syntactically valid but never
+  issued state/code to the live BFF. This is **not** an MFA-cancel test.
+* `LIVE_BFF_LOGOUT`, `LIVE_BFF_LOGOUT_SESSION_DESTROYED`,
+  `LIVE_CROSS_SESSION_ISOLATION`: after case approval and ledger-relevant
+  readbacks, the customer logs out of **BFF** using the real CSRF-protected
+  endpoint. The customer BFF session must become unauthenticated and the
+  separate seller BFF session must remain authenticated.
+* `LIVE_BFF_LOGOUT_NO_GLOBAL_SSO_CLAIM`: verifies the BFF correctly reports
+  `wso2Session: NOT_TERMINATED`. **This is not global SSO logout.**
+
+Each gate requires the *current* Git SHA, Docker+BFF runtime identity, a fresh
+checksummed P010 report and operator-assisted browser evidence. A missing
+observation yields `BLOCKED`, a wrong HTTP code/boolean yields `FAIL`.
+Existing P010 reports from before this increment do not contain these fields
+and cannot be credited. An unavailable probe does not cause the positive
+customer/seller journey to falsely pass a security gate.
+
+`FULL_LIVE_NEGATIVE_MATRIX` deliberately remains `BLOCKED` pending separate
+approved real tests of **WSO2 MFA cancellation, stale signed MFA evidence,
+provider token revocation, seller self-approval using an authorized dual-role
+fixture, RP-initiated SSO logout, real session expiry, and a controlled WSO2
+outage/recovery**. Unit/integration doubles are not substitutes. Revocation,
+identity-role mutation and intentionally taking down a container require a
+separate fresh plan and operator approval; they are **not** run here.
+
+`CASE_RESOURCE_ROLE_READBACK` is also `BLOCKED` due to the missing historical
+private provisioning journal. The passing independent live
+`CASES_RBAC_CONFIG_READBACK` and real business authorization evidence do not
+invent the journal or certify historical ownership. Any future adoption is a
+new, separately approved, audited provenance event, not a backdated bootstrap.
+
+To execute (creates one new persistent test request and requires actual WSO2
+sign-in and seller TOTP):
+
+```bash
+CIAM_P011_LIVE_CONFIRM=INTERACTIVE_WSO2_AND_PERSISTENT_CASE_WRITE \
+CIAM_P010_LOCAL_WSO2_TLS_CONFIRM=TRUST_CURRENT_LOCAL_WSO2_CERTIFICATE_FOR_BROWSER_TEST \
+./scripts/ciam-v10.sh live-acceptance
+./scripts/ciam-v10.sh readiness
+```
+
+Do not run live acceptance repeatedly just to refresh a `BLOCKED` negative
+matrix. Preserve the private reports and address any failed per-scenario gate.

@@ -19,11 +19,12 @@ import sys
 import urllib.error
 import urllib.request
 if __package__:
-    from . import core, live_checks, live_denials
+    from . import core, live_checks, live_denials, live_security
 else:
     import core
     import live_checks
     import live_denials
+    import live_security
 
 REPO=Path(__file__).resolve().parents[3]
 HOME=Path(os.environ.get('CIAM_V10_HOME',str(Path.home()/'wso2-ciam-v10'))).expanduser()
@@ -59,7 +60,8 @@ def offline_test():
         'EXISTING_BFF_NODE_UNIT_MOCKED_INTEGRATION':summary_run(['npm','test'],timeout=240),
         'EXISTING_V10_PYTHON_UNIT':summary_run([sys.executable,CLI,'test'],timeout=200),
         'P010_BROWSER_DRIVER_SYNTAX_STATIC':summary_run(['node','--check','scripts/ciam-p010-interactive-acceptance.mjs'],timeout=30),
-        'P011_CASE_NEGATIVE_CONTRACT_UNIT':summary_run(['node','--test','scripts/ciam-p011-negative-observations.test.mjs'],timeout=30)
+        'P011_CASE_NEGATIVE_CONTRACT_UNIT':summary_run(['node','--test','scripts/ciam-p011-negative-observations.test.mjs'],timeout=30),
+        'P011_LIVE_SECURITY_CONTRACT_UNIT':summary_run(['node','--test','scripts/ciam-p011-live-security.test.mjs'],timeout=30)
     }
     # Existing Python/Node tests may use local doubles; they do not prove live authentication.
     status='NOT_READY' if any(x['status']=='FAIL' for x in checks.values()) else 'BLOCKED' if any(x['status']=='BLOCKED' for x in checks.values()) else 'READY'
@@ -285,10 +287,23 @@ def report(inventory_only=False):
             except (OSError,ValueError,KeyError,TypeError,IndexError):pass
         for name,verdict,expected,reason in live_denials.assess(live_denials_evidence,live_ok):
             gates.append(core.gate(name,verdict,'BROWSER_E2E',expected,reason))
+        # Live BFF callback replay and logout boundaries from the *same* fresh,
+        # source/runtime-pinned P010 attestation. These are NOT global WSO2 SSO
+        # logout, token revocation, or provider MFA cancellation tests.
+        security_evidence={}
+        if live_ok:
+            try:
+                srow=original.get('security',{})
+                if isinstance(srow,dict):security_evidence=srow
+            except (NameError,AttributeError,TypeError):pass
+        for gate_id,status,expected,reason,kind in live_security.assess(security_evidence,live_ok):
+            gates.append(core.gate(gate_id,status,kind,expected,reason))
+        for gate_id,status,expected,reason,kind in live_security.deferred():
+            gates.append(core.gate(gate_id,status,kind,expected,reason))
         # More real business denials, but still not canceled MFA, replay, revocation or SSO/logout.
         gates.append(core.gate('FULL_LIVE_NEGATIVE_MATRIX','BLOCKED','LIVE_AUTHENTICATION',
-                'callback replay, stale/canceled MFA, revocation, self-approval, SSO/logout and outage tested live',
-                'NOT_IMPLEMENTED_IN_EXISTING_OPERATOR_RUNNER'))
+                'stale/canceled MFA, token revocation, self-approval, global SSO/logout, expiry and controlled outage verified live',
+                'MANDATORY_LIVE_SECURITY_SCENARIOS_STILL_UNATTESTED'))
         # Only a current, checksummed, same-source+runtime P010 browser run can
         # supply the unique case ID. Prior P010 artifacts lack it, so BLOCKED.
         audit_status='BLOCKED'

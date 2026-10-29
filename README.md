@@ -3104,3 +3104,14 @@ CIAM_P011_LIVE_CONFIRM=INTERACTIVE_WSO2_AND_PERSISTENT_CASE_WRITE \
 
 Existing authority-only provisioning can be *planned* without writes using `WSO2_CIAM_V10_ROLE_API=v3 ./scripts/ciam-v10.sh provision-plan`; the separately approved `provision-apply` requires the private plan path and exact `CIAM_P012_APPLY_CONFIRM=APPLY_THIS_FRESH_AUTHORIZATION_PLAN`. The approval is one-use, 10-minute-bound, journaled before writes and followed by read-only reconciliation. Do not use it to recreate already-provisioned tenants, clients or Cases roles. Existing private credentials and evidence stay under `~/wso2-ciam-v10/` with mode `0600`; neither the installer nor CI initializes a WSO2 lab.
 <!-- CIAM_P011_P012_GATES_END -->
+
+### CIAM P0.11 live security probes (v31)
+
+The existing operator-assisted `live-acceptance` now captures real consumed
+OIDC callback replay rejection, unsolicited callback denial, CSRF-protected
+BFF logout, and customer/seller session isolation **without recording callback
+codes, tokens or cookies**. See
+[the v31 acceptance and outstanding-scenario matrix](docs/CIAM_P011_P012_GATES.md).
+These new checks require a fresh source/runtime-pinned browser run; the previous
+live attestation cannot prove them. The mandatory full matrix and original
+provisioning-ownership journal remain `BLOCKED` until independently proven.
