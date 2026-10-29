@@ -150,49 +150,148 @@ class AuditLedgerTests(unittest.TestCase):
 
 if __name__=='__main__':unittest.main()
 
-class MockedConfigurationTests(unittest.TestCase):
-    """Controlled doubles: these tests NEVER attest real WSO2 acceptance."""
-    def fixture(self, *, missing_grant=False, wrong_scope=False):
+class EstablishedRolesTests(unittest.TestCase):
+    """Source-compatible fixtures; all tests here are MOCKED, not live."""
+    def fixture(self, *, missing_grant=False, wrong_scope=False, unexpected_grant=False,
+                wrong_audience=False):
         from types import SimpleNamespace
         import re
         scopes=('ciam:cases:create','ciam:cases:read','ciam:cases:review','ciam:cases:approve')
         domains={'aurora':'aurora.identity.test','brisa':'brisa.identity.test'}
-        fake=SimpleNamespace(DOMAINS=domains, API_NAME='CIAM v10 Cases API', SCOPES=scopes,
-                             resources=SimpleNamespace(OWNER='labtenantadmin',ID=re.compile('^[a-z0-9]+$'),basic=lambda *x:'test-auth'))
+        fake=SimpleNamespace(DOMAINS=domains, SCOPES=scopes,
+            CUSTOMER_SCOPES=scopes[:2], SELLER_SCOPES=(scopes[1],scopes[2],scopes[3]),
+            resources=SimpleNamespace(OWNER='labtenantadmin',ID=re.compile('^[a-z0-9]+$'),
+                                      basic=lambda *x:'test-auth'))
         fake.path=lambda brand,p:'/'+brand+p
+        fake.memberships=lambda ids,seed,brand,kind: (['user1'] if kind!='seller' or brand=='aurora' else [])
         fake.exact_resource=lambda *a: {'id':'resource1','identifier':live.PINNED_IDENTIFIER}
-        fake.list_items=lambda body,*names:body
-        fake.read_authorization=lambda *a: None if missing_grant else {'authorizedScopes':list(scopes)}
+        fake.list_items=lambda body,*names: (body['Resources'] if isinstance(body,dict) else body)
+        fake.read_authorization=lambda *a: None if missing_grant else {'authorizedScopes':list(scopes), 'policyId':'RBAC'}
         fake.permission_list=lambda r:set(r['authorizedScopes'])
-        fake.role_specs=lambda oidc,ids,seed,brand:iter([('web','customer','app1','Customer',['user1'],['ciam:cases:read'])])
-        fake.exact_role=lambda *a:{'id':'role1'}
+        def role_lookup(client,brand,auth,version,name):
+            suffix=name.replace('CIAM Business ','').lower().replace(' ','')
+            return {'id':suffix}
+        fake.exact_role=role_lookup
         def read(client,path,auth):
             if '/api-resources/resource1/scopes' in path:return list(scopes)
             if '/api-resources/resource1' in path:
-                return {'id':'resource1','identifier':live.PINNED_IDENTIFIER,'name':live.PINNED_RESOURCE_NAME,
-                         'description':'ciam-v10-cases-'+'b'*32,'requiresAuthorization':True}
+                return {'id':'resource1','identifier':live.PINNED_IDENTIFIER,
+                        'name':live.PINNED_RESOURCE_NAME,'requiresAuthorization':True}
             if '/applications/' in path:
                 return {'id':'app1','name':'App 1','associatedRoles':{'allowedAudience':'APPLICATION'}}
             if '/scim2/Users/' in path:return {'id':'user1','active':True}
+            if '/scim2/v3/Roles?' in path:
+                brand=path.split('/')[1]
+                roles=live.existing_business_role_specs(fake,o,{}, {},brand)
+                rows=[{'id':name.replace('CIAM Business ','').lower().replace(' ',''),
+                       'displayName':name} for _,_,_,name,_,_ in roles]
+                if unexpected_grant:rows.append({'id':'unexpected','displayName':'Unowned Cases'})
+                return {'totalResults':len(rows),'Resources':rows}
             if '/scim2/v3/Roles/' in path:
-                return {'id':'role1','displayName':'Customer','audience':{'type':'application','value':'app1'},
-                        'users':[{'value':'user1'}],'permissions':[{'value': 'wrong' if wrong_scope else 'ciam:cases:read'}]}
+                rid=path.rsplit('/',1)[-1]
+                if rid=='unexpected':
+                    return {'id':rid,'displayName':'Unowned Cases',
+                            'permissions':[{'value':'ciam:cases:approve'}]}
+                channel='WEB' if rid.endswith('web') else 'APP'
+                kind=rid[:-len(channel)].capitalize()
+                perms={'Customer':scopes[:2],
+                       'Seller':(scopes[1],scopes[2],scopes[3]),
+                       'Administrator':(scopes[1],scopes[2])}[kind]
+                return {'id':rid,'displayName':'CIAM Business '+kind+' '+channel,
+                        'audience':{'type':'application',
+                                    'value':'otherapp' if wrong_audience else 'app1'},
+                        'users':[{'value':'user1'}],
+                        'permissions':[{'value':v} for v in (('wrong',) if wrong_scope else perms)]}
             raise AssertionError('Unexpected mocked GET')
         fake.read=read
         t={'tenants':{k:{'owner':{'password':'FAKE_FOR_TEST_ONLY'}} for k in domains}}
-        o={'tenants':{k:{'clients':{c:{'id':'app1','name':'App 1'} for c in ('web','app')}} for k in domains}}
+        o={'tenants':{k:{'clients':{c:{'id':'app1','name':'App 1'}
+                                   for c in ('web','app')}} for k in domains}}
         return fake,(t,o,{}, {}, {},'v3')
-    def test_mocked_readback_positive_is_only_mocked(self):
+
+    def test_exact_original_ten_role_contract_and_admin_no_approval(self):
+        fake,context=self.fixture()
+        for brand,count in [('aurora',6),('brisa',4)]:
+            rows=live.existing_business_role_specs(fake,context[1],{}, {},brand)
+            self.assertEqual(len(rows),count)
+            for _,kind,_,name,_,scopes in rows:
+                self.assertTrue(name.startswith('CIAM Business '))
+                if kind=='administrator':
+                    self.assertEqual(set(scopes),{'ciam:cases:read','ciam:cases:review'})
+                    self.assertNotIn('ciam:cases:approve',scopes)
+        self.assertFalse(any(row[1]=='seller' for row in
+                             live.existing_business_role_specs(fake,context[1],{}, {},'brisa')))
+
+    def test_management_readback_pass_does_not_claim_token_or_group_attestation(self):
         fake,context=self.fixture()
         row=live.independent_rbac_readback(fake,object(),context)
         self.assertEqual(row['outcome'],'PASS')
+        self.assertEqual(row['tenants']['aurora']['scimRolesVerified'],6)
+        self.assertEqual(row['tenants']['brisa']['scimRolesVerified'],4)
+        self.assertEqual(row['groupInheritance'],'NOT_ATTESTED')
         self.assertEqual(row['runtimeAuthorization'],'NOT_TESTED_BY_MANAGEMENT_READBACK')
         self.assertEqual(row['historicalOwnership'],'BLOCKED_MISSING_JOURNAL')
-    def test_missing_grant_must_block(self):
+
+    def test_missing_grant_denied(self):
         fake,context=self.fixture(missing_grant=True)
         with self.assertRaisesRegex(live.Blocked,'AUTHORIZATION_MISSING'):
             live.independent_rbac_readback(fake,object(),context)
-    def test_wrong_scim_scope_must_block(self):
+
+    def test_wrong_rbac_policy_denied(self):
+        fake,context=self.fixture()
+        fake.read_authorization=lambda *args:{'authorizedScopes':list(fake.SCOPES),
+                                                 'policyId':'UNCONSTRAINED'}
+        with self.assertRaisesRegex(live.Blocked,'RBAC_POLICY_NOT_ATTESTED'):
+            live.independent_rbac_readback(fake,object(),context)
+
+    def test_rbac_policy_missing_denied(self):
+        fake,context=self.fixture()
+        fake.read_authorization=lambda *args:{'authorizedScopes':list(fake.SCOPES)}
+        with self.assertRaisesRegex(live.Blocked,'RBAC_POLICY_NOT_ATTESTED'):
+            live.independent_rbac_readback(fake,object(),context)
+
+    def test_expected_role_id_drift_in_complete_list_denied(self):
+        fake,context=self.fixture()
+        real=fake.read
+        def bad(client,path,auth):
+            result=real(client,path,auth)
+            if '/scim2/v3/Roles?' in path:
+                result['Resources'][0]['id']='substituted'
+            return result
+        fake.read=bad
+        with self.assertRaisesRegex(live.Blocked,'EXPECTED_ROLE_INVENTORY_MISMATCH'):
+            live.independent_rbac_readback(fake,object(),context)
+
+    def test_wrong_scope_denied(self):
         fake,context=self.fixture(wrong_scope=True)
         with self.assertRaisesRegex(live.Blocked,'PERMISSIONS_MISMATCH'):
             live.independent_rbac_readback(fake,object(),context)
+
+    def test_cross_client_audience_denied(self):
+        fake,context=self.fixture(wrong_audience=True)
+        with self.assertRaisesRegex(live.Blocked,'AUDIENCE_MISMATCH'):
+            live.independent_rbac_readback(fake,object(),context)
+
+    def test_unowned_extra_case_approval_denied(self):
+        fake,context=self.fixture(unexpected_grant=True)
+        with self.assertRaisesRegex(live.Blocked,'UNEXPECTED_ROLE_HAS_CASES_PERMISSION'):
+            live.independent_rbac_readback(fake,object(),context)
+
+    def test_unexpected_tenant_denied(self):
+        fake,context=self.fixture()
+        with self.assertRaisesRegex(live.Blocked,'TENANT_NOT_IN_ROLE_CONTRACT'):
+            live.existing_business_role_specs(fake,context[1],{}, {},'other')
+
+    def test_duplicate_role_permission_denied(self):
+        fake,context=self.fixture()
+        real=fake.read
+        def duplicate(client,path,auth):
+            result=real(client,path,auth)
+            if path.endswith('/customerweb'):
+                result['permissions'].append(result['permissions'][0])
+            return result
+        fake.read=duplicate
+        with self.assertRaisesRegex(live.Blocked,'PERMISSIONS_MISMATCH'):
+            live.independent_rbac_readback(fake,object(),context)
+
+if __name__=='__main__':unittest.main()

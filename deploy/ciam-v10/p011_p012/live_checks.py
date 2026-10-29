@@ -85,6 +85,78 @@ def verify_existing_resource_contract(repo):
             'EXISTING_RESOURCE_CONTRACT_DRIFT')
     return True
 
+# The established live business-role contract predates the separate, guarded
+# six-role "CIAM v10 Cases ..." creation stage. Never make new role names or
+# provision permissions merely to satisfy a read-only acceptance gate.
+def existing_business_role_specs(c, oidc, identities, seed, brand):
+    require(brand in ('aurora', 'brisa'), 'TENANT_NOT_IN_ROLE_CONTRACT')
+    roles=[]
+    for channel in ('web', 'app'):
+        app=oidc['tenants'][brand]['clients'][channel]
+        require(isinstance(app.get('id'), str) and c.resources.ID.fullmatch(app['id']),
+                'ORIGINAL_ROLE_APP_ID_INVALID')
+        for kind in ('customer', 'seller', 'administrator'):
+            users=c.memberships(identities, seed, brand, kind)
+            if not users:
+                continue
+            require(isinstance(users, list) and len(users)==len(set(users)) and
+                    all(isinstance(x,str) and c.resources.ID.fullmatch(x) for x in users),
+                    'ORIGINAL_ROLE_MEMBERSHIP_INVALID')
+            perms=(c.CUSTOMER_SCOPES if kind=='customer' else
+                   c.SELLER_SCOPES if kind=='seller' else
+                   ('ciam:cases:read', 'ciam:cases:review'))
+            name=f'CIAM Business {kind.title()} {channel.upper()}'
+            roles.append((channel,kind,app['id'],name,users,tuple(perms)))
+    require(len(roles)==(6 if brand=='aurora' else 4), 'ORIGINAL_ROLE_COUNT_MISMATCH')
+    return roles
+
+
+def verify_no_extra_case_roles(c, client, brand, auth, version, expected_ids):
+    """Exhaustive SCIM list, then exact readbacks; fail closed on unexpected grants."""
+    from urllib.parse import urlencode
+    case_scopes=set(c.SCOPES)
+    seen=set()
+    present=set()
+    total=None
+    for _ in range(55):
+        url=c.path(brand, '/scim2/'+version+'/Roles')+'?'+urlencode(
+            {'startIndex': len(seen)+1, 'count': 100})
+        page=c.read(client,url,auth)
+        require(isinstance(page,dict) and type(page.get('totalResults')) is int and
+                0<=page['totalResults']<=5000, 'ROLE_INVENTORY_COUNT_UNVERIFIED')
+        if total is None:total=page['totalResults']
+        require(total==page['totalResults'], 'ROLE_INVENTORY_CHANGED')
+        rows=c.list_items(page,'Resources','resources')
+        require(isinstance(rows,list) and len(rows)<=100 and
+                (rows or len(seen)==total), 'ROLE_INVENTORY_PAGE_UNVERIFIED')
+        for row in rows:
+            require(isinstance(row,dict) and isinstance(row.get('id'),str) and
+                    c.resources.ID.fullmatch(row['id']) and row['id'] not in seen and
+                    isinstance(row.get('displayName'),str),
+                    'ROLE_INVENTORY_DUPLICATE_OR_INVALID')
+            seen.add(row['id'])
+            if row['displayName'] in expected_ids:
+                require(row['id']==expected_ids[row['displayName']],
+                        'EXPECTED_ROLE_INVENTORY_MISMATCH')
+                present.add(row['displayName'])
+                continue
+            detail=c.read(client,c.path(brand, '/scim2/'+version+'/Roles/'+row['id']),auth)
+            require(isinstance(detail,dict) and detail.get('id')==row['id'] and
+                    detail.get('displayName')==row['displayName'] and
+                    isinstance(detail.get('permissions'),list),
+                    'UNEXPECTED_ROLE_DETAIL_UNVERIFIED')
+            permissions=detail['permissions']
+            require(all(isinstance(x,dict) and isinstance(x.get('value'),str)
+                        for x in permissions), 'UNEXPECTED_ROLE_PERMISSIONS_INVALID')
+            require(not ({x['value'] for x in permissions} & case_scopes),
+                    'UNEXPECTED_ROLE_HAS_CASES_PERMISSION')
+        require(len(seen)<=total,'ROLE_INVENTORY_COUNT_OVERFLOW')
+        if len(seen)==total:
+            require(present==set(expected_ids), 'EXPECTED_ROLE_MISSING_FROM_INVENTORY')
+            return len(seen)
+    raise Blocked('ROLE_INVENTORY_PAGINATION_LIMIT')
+
+
 def independent_rbac_readback(case_module, client, context, identifier=PINNED_IDENTIFIER):
     """Check live WSO2 resource, grants, SCIM roles & users; NEVER assume ownership.
 
@@ -109,6 +181,7 @@ def independent_rbac_readback(case_module, client, context, identifier=PINNED_ID
                                resource_id_validator=c.resources.ID)
         require(set(names) == set(c.SCOPES), 'RESOURCE_SCOPES_MISMATCH')
         roles_checked = 0
+        verified_role_ids={}
         for channel in ('web','app'):
             app = oidc['tenants'][brand]['clients'][channel]
             app_id=app['id']
@@ -119,7 +192,11 @@ def independent_rbac_readback(case_module, client, context, identifier=PINNED_ID
             grant=c.read_authorization(client,brand,auth,app_id,rid)
             require(grant is not None, 'APP_AUTHORIZATION_MISSING')
             require(c.permission_list(grant)==set(c.SCOPES),'APP_SCOPE_AUTHORIZATION_MISMATCH')
-        for channel, kind, app_id, role_name, users, perms in c.role_specs(oidc,identities,seed,brand):
+            declared=[grant[k] for k in ('policyId','policyIdentifier') if k in grant]
+            require(declared and all(type(x) is str and x=='RBAC' for x in declared),
+                    'APP_RBAC_POLICY_NOT_ATTESTED')
+        original_roles=existing_business_role_specs(c,oidc,identities,seed,brand)
+        for channel, kind, app_id, role_name, users, perms in original_roles:
             for uid in users:
                 person=c.read(client,c.path(brand,'/scim2/Users/'+uid),auth)
                 require(person.get('id')==uid and person.get('active') is not False,
@@ -132,13 +209,20 @@ def independent_rbac_readback(case_module, client, context, identifier=PINNED_ID
             verify_role_detail(role_detail,role_id=role_id,name=role_name,app_id=app_id,
                                expected_users=users,expected_scopes=perms)
             roles_checked+=1
+            verified_role_ids[role_name]=role_id
+        enumerated=verify_no_extra_case_roles(c,client,brand,auth,version,
+                                              verified_role_ids)
         result[brand]={'resource':'PASS','scopes':'PASS','authorizedApplications':2,
-                       'scimRolesVerified':roles_checked,'membership':'PASS'}
+                       'scimRolesVerified':roles_checked,'allScimRolesEnumerated':enumerated,
+                       'membership':'PASS_DIRECT_ONLY',
+                       'groupInheritance':'NOT_ATTESTED'}
     require(len(result)==2 and all(v['scimRolesVerified']>0 for v in result.values()),
             'CASES_ROLE_COVERAGE_INCOMPLETE')
     return {'outcome':'PASS','evidenceClass':'LIVE_READBACK','tenants':result,
             'historicalOwnership':'BLOCKED_MISSING_JOURNAL',
-            'runtimeAuthorization':'NOT_TESTED_BY_MANAGEMENT_READBACK'}
+            'runtimeAuthorization':'NOT_TESTED_BY_MANAGEMENT_READBACK',
+            'businessRoleContract':'ESTABLISHED_TEN_ROLE_CONTRACT',
+            'groupInheritance':'NOT_ATTESTED'}
 
 
 def load_cases_module(repo):
