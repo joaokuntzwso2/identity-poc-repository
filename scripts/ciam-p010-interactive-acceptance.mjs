@@ -5,6 +5,7 @@
 import { chromium } from '@playwright/test';
 import { fetchLocalWso2BrowserPin, chromiumPinnedTlsArgs } from './ciam-p010-local-cert-pin.mjs';
 import { safeFailureCode, classifyBrowserLocation, waitForPortalReturn } from './ciam-p010-browser-progress.mjs';
+import { assertCaseDenial, caseNegativeMatrix } from './ciam-p011-negative-observations.mjs';
 import { mkdir, writeFile, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

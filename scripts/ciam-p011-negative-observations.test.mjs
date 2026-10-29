@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {REQUIRED_CASE_NEGATIVES, assertCaseDenial, caseNegativeMatrix} from './ciam-p011-negative-observations.mjs';
 test('complete actual-response matrix requires every independently observed denial', () => {
   const row = {};
@@ -25,4 +26,10 @@ test('unrecognized keys and nonnumeric HTTP values refused', () => {
 test('mocked evidence or response body alone never supplies a live result', () => {
   assert.equal(caseNegativeMatrix({status:'PASS',mocked:true}), false);
   assert.equal(caseNegativeMatrix(null), false);
+});
+
+// Regression: Node --check cannot detect a missing runtime binding.
+test('real browser runner imports the live denial assertion helpers', () => {
+  const source=readFileSync(new URL('./ciam-p010-interactive-acceptance.mjs', import.meta.url), 'utf8');
+  assert.match(source, /import\s*\{\s*assertCaseDenial\s*,\s*caseNegativeMatrix\s*\}\s*from\s*['"]\.\/ciam-p011-negative-observations\.mjs['"]/);
 });
