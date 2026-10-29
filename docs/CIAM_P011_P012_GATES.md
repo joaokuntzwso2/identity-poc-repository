@@ -80,3 +80,45 @@ Approval must happen within 10 minutes with a clean, unchanged source. The apply
 ## Recovery and troubleshooting
 
 A `BLOCKED` report is expected when WSO2 localhost, `npm ci`, Playwright, private credentials or manual interaction are unavailable. Inspect filenames/classification only; never paste private P010 JSON, browser traces or `~/wso2-ciam-v10/private` contents. Run `./scripts/ciam-v10.sh bff-diagnose` for the BFF and the current read-only `authorization-reconcile`/`authority-status` for provisioning drift. On failed or ambiguous apply, keep the existing journal and investigate WSO2 state manually. No automatic replay or Docker/DB reset is permitted.
+
+## Increment after source review (`91a0b922b546`): independent live readbacks
+
+The repository's Cases bootstrap `verify` remains **BLOCKED** if the private
+`bootstrap-cases-rbac-v10.private.json` provisioning journal is missing. The
+journal must not be synthesized or reconstructed to imply historical ownership.
+
+The additional `CASES_RBAC_CONFIG_READBACK` is **GET-only** and independent of
+that journal: it validates the exact pinned Cases API audience on **both**
+tenants, HTTPS resource details, authorized scopes, OIDC application grants,
+SCIM role audience, SCIM membership, active users and exact permissions. This
+proves configuration readback but **not signed-token effective authorization**,
+client-specific SSO, or historical resource ownership. Results carry no remote
+object IDs, credentials or PII. Missing/ambiguous resources, mismatched scopes,
+roles or grants fail closed to `BLOCKED`.
+
+The existing P010 real-browser runner now records its generated application
+case UUID (not tokens, cookies, subject identifiers or case contents), and
+asserts three additional real denials: customer approval forbidden, anonymous
+Cases GET denied, and wrong-client/tenant Cases GET denied. The independent
+`AUDIT_EVENT_READBACK` uses the **same current, checksummed P010 artifact** and
+only passes if the private on-disk business ledger has exactly one creation
+and one subsequent approval event for that UUID, distinct hashed actors,
+expected WSO2 step-up assurance and a valid `authTime`. File ownership and
+permissions are checked. Ledger discovery is bounded and refuses ambiguous
+paths; set `CIAM_P011_BUSINESS_LEDGER_DIR` to the *existing* absolute business
+ledger directory only if auto-discovery cannot locate it. **No ledger state is
+created or removed by readiness.** Old P010 artifacts without a UUID remain
+`BLOCKED` for this gate. Fresh actual browser interaction is still required.
+
+The three new live-denial gates are separate from `FULL_LIVE_NEGATIVE_MATRIX`.
+That mandatory matrix remains `BLOCKED` pending independent live evidence of
+callback replay, expired/revoked tokens, canceled/stale/invalid MFA, SSO and
+logout, and service-outage recovery. Do not describe any of these as live
+PASS based on unit tests, mocks or the three additional browser denials.
+
+This increment is **source-only** until installed and exercised on the Mac.
+On a local checkout, run `./scripts/ciam-v10.sh offline-test`,
+`./scripts/ciam-v10.sh security-audit`, then `inventory` and `readiness`.
+Running `live-acceptance` creates a persistent business record and still
+requires a separately authorized operator to interact with genuine WSO2 login
+and TOTP; it is never launched by the source installer.

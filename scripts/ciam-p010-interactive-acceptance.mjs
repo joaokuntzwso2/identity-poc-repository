@@ -82,12 +82,31 @@ try{
  evidence.cases.createHttp=created.status;
  if(created.status!==201||!created.body.id)throw Error('PERSISTENT_CUSTOMER_CASE_CREATION_FAILED');
  const caseId=created.body.id;
+ // P0.11 private evidence: UUID only; no identity subjects, tokens or case contents.
+ evidence.cases.caseId=caseId;
  const own=await api(customer.page,'GET','/api/brands/aurora/cases?client=aurora-web');
  evidence.cases.ownerReadHttp=own.status;
  if(own.status!==200||!own.body.records?.some(r=>r.id===caseId&&r.status==='OPEN'))throw Error('OWNER_VISIBILITY_FAILED');
  const denied=await api(customer.page,'GET','/api/brands/brisa/cases?client=aurora-web');
  evidence.denials.crossTenantHttp=denied.status;
  if(denied.status!==403)throw Error('CROSS_TENANT_NOT_DENIED');
+ // Negative checks execute against the actual BFF and real WSO2-bound session.
+ // These are additional to (not a replacement for) the full P0.11 live matrix.
+ const forbiddenApproval=await api(customer.page,'POST',
+   `/api/brands/aurora/cases/${caseId}/approve?client=aurora-web`);
+ evidence.denials.customerApprovalHttp=forbiddenApproval.status;
+ if(forbiddenApproval.status!==403)throw Error('CUSTOMER_APPROVAL_SCOPE_NOT_DENIED');
+ const wrongClient=await api(customer.page,'GET','/api/brands/aurora/cases?client=brisa-web');
+ evidence.denials.wrongTenantClientHttp=wrongClient.status;
+ if(wrongClient.status!==403)throw Error('CROSS_TENANT_CLIENT_NOT_DENIED');
+ const anonymousContext=await browser.newContext({ignoreHTTPSErrors:false});
+ try {
+   const anonymousResponse=await anonymousContext.request.get(
+     `${base}/api/brands/aurora/cases?client=aurora-web`,{timeout:10000});
+   evidence.denials.anonymousCasesHttp=anonymousResponse.status();
+   if(anonymousResponse.status()!==401)throw Error('ANONYMOUS_CASES_NOT_DENIED');
+ }finally{await anonymousContext.close();}
+
  activeStage='LOGIN_OTHER_CLIENTS';
  for(const [key,brand,channel] of KEYS.slice(1)){const result=await authenticate(key,brand,channel,'TENANT USER');await result.context.close();}
  const seller=await authenticate('aurora-web','aurora','web','AURORA SELLER (separate browser)','seller');

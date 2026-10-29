@@ -19,9 +19,10 @@ import sys
 import urllib.error
 import urllib.request
 if __package__:
-    from . import core
+    from . import core, live_checks
 else:
     import core
+    import live_checks
 
 REPO=Path(__file__).resolve().parents[3]
 HOME=Path(os.environ.get('CIAM_V10_HOME',str(Path.home()/'wso2-ciam-v10'))).expanduser()
@@ -227,6 +228,15 @@ def report(inventory_only=False):
                   'INACCESSIBLE_OR_UNVERIFIED')
         gates.append(core.gate(gate_id,'PASS' if passed else 'BLOCKED','LIVE_READBACK',
             'existing WSO2-managed scoped object readback',observed))
+    # Independent read-only management configuration check. This is NOT a
+    # substitute for the missing historical Cases ownership journal, nor a
+    # signed-token effective authorization test.
+    cases_config=live_checks.run_cases_readback(REPO) if rt and private_state() else {'outcome':'BLOCKED','reason':'RUNTIME_OR_PRIVATE_STATE_UNAVAILABLE'}
+    gates.append(core.gate('CASES_RBAC_CONFIG_READBACK',
+        'PASS' if cases_config.get('outcome')=='PASS' else 'FAIL' if cases_config.get('outcome')=='NOT_READY' else 'BLOCKED','LIVE_READBACK',
+        'two tenants: exact resource/scopes, app grants, SCIM roles, users and audiences',
+        'LIVE_CONFIG_VERIFIED_NOT_HISTORICAL_OWNERSHIP' if cases_config.get('outcome')=='PASS'
+        else cases_config.get('reason','NOT_VERIFIED')))
     # Evaluate tracked source independently from inspection evidence. An unsafe blob is NOT_READY.
     try: audit_result=audit()
     except (ValueError,OSError):audit_result={'status':'BLOCKED','trackedIssues':[],'evidenceIssues':[],'inspectionAvailable':False}
@@ -259,12 +269,54 @@ def report(inventory_only=False):
         gates.append(core.gate('OFFLINE_TESTS','PASS' if offline_ok else 'BLOCKED','UNIT','complete current-source offline suite',offline_reason))
         live_ok,live_reason=current_live(sha,rt)
         gates.append(core.gate('REAL_BROWSER_TOTP','PASS' if live_ok else 'BLOCKED','BROWSER_E2E','fresh four-client authenticated WSO2 and real TOTP acceptance',live_reason))
-        # P010 driver does not verify all mandatory negative cases. Fail closed even on fresh positive journey.
+        # P010 now adds three real-denial assertions without changing identity
+        # state. They supplement, never replace, the mandatory full matrix.
+        live_denials={}
+        if live_ok:
+            try:
+                attestation=sorted(INSPECTION.glob('p011-live-attested-*.json'),reverse=True)[0]
+                attested=json.loads(core.read_private(attestation))
+                ref=attested['references'][0]
+                original=json.loads(core.read_private(INSPECTION/ref['artifact']))
+                live_denials=original.get('denials',{})
+                if not isinstance(live_denials,dict):live_denials={}
+            except (OSError,ValueError,KeyError,TypeError,IndexError):pass
+        for name,field,expected in (
+            ('LIVE_CUSTOMER_APPROVAL_DENIAL','customerApprovalHttp',403),
+            ('LIVE_ANONYMOUS_CASE_DENIAL','anonymousCasesHttp',401),
+            ('LIVE_CROSS_CLIENT_DENIAL','wrongTenantClientHttp',403)):
+            seen=live_denials.get(field)
+            verdict='PASS' if seen==expected and live_ok else 'FAIL' if live_ok and seen is not None else 'BLOCKED'
+            gates.append(core.gate(name,verdict,'BROWSER_E2E',expected,
+                'FRESH_LIVE_HTTP_DENIAL_VERIFIED' if verdict=='PASS' else 'MISSING_OR_WRONG_LIVE_DENIAL'))
+        # These do not cover canceled MFA, replay, revocation, or SSO/logout.
         gates.append(core.gate('FULL_LIVE_NEGATIVE_MATRIX','BLOCKED','LIVE_AUTHENTICATION',
                 'callback replay, stale/canceled MFA, revocation, self-approval, SSO/logout and outage tested live',
                 'NOT_IMPLEMENTED_IN_EXISTING_OPERATOR_RUNNER'))
-        gates.append(core.gate('AUDIT_EVENT_READBACK','BLOCKED','LIVE_READBACK','independent approval audit ledger readback',
-                'NOT_ATTESTED_BY_EXISTING_OPERATOR_RUNNER'))
+        # Only a current, checksummed, same-source+runtime P010 browser run can
+        # supply the unique case ID. Prior P010 artifacts lack it, so BLOCKED.
+        audit_status='BLOCKED'
+        audit_observed='FRESH_BROWSER_CASE_ID_REQUIRED'
+        if live_ok:
+            try:
+                attestation=sorted(INSPECTION.glob('p011-live-attested-*.json'),reverse=True)[0]
+                row=json.loads(core.read_private(attestation))
+                ref=row['references'][0]
+                original=json.loads(core.read_private(INSPECTION/ref['artifact']))
+                case_id=original.get('cases',{}).get('caseId')
+                if case_id:
+                    ledger_dir=live_checks.discover_ledger(HOME,os.environ.get('CIAM_P011_BUSINESS_LEDGER_DIR'))
+                    ledger=live_checks.read_ledger(ledger_dir)
+                    checked=live_checks.verify_case_events(ledger,case_id)
+                    if checked['outcome']=='PASS':
+                        audit_status='PASS';audit_observed='EXACT_CASE_LEDGER_TRANSITION_AND_DISTINCT_ACTORS_VERIFIED'
+                else:audit_observed='P010_ARTIFACT_MISSING_CASE_ID'
+            except live_checks.Blocked as e:
+                audit_observed=str(e)
+            except (OSError,ValueError,KeyError,TypeError,IndexError):
+                audit_observed='AUDIT_READBACK_INCOMPLETE_OR_UNSAFE'
+        gates.append(core.gate('AUDIT_EVENT_READBACK',audit_status,'LIVE_READBACK',
+            'independent created→approved ledger event check tied to fresh browser case ID',audit_observed))
     result={'schema':'ciam-p011.readiness.v1','createdUtc':core.iso_now(),'sourceGitSha':sha,'worktreeDirty':dirty,
             'runtimeIdentity':rt,'outcome':core.combine(gates),'gates':gates,
             'evidenceClassPolicy':'mocked/static results never substituted for live authentication',

@@ -15,6 +15,22 @@ The BFF handles OAuth sessions, live introspection, audience and scope checks,
 UserInfo, CSRF, and privately stored business case data. No simulated users, MFA,
 roles, permissions or consent are accepted as live evidence.
 
+
+### P0.11–P0.12 independent readbacks (post-source review)
+
+The existing `./scripts/ciam-v10.sh readiness` command now checks Cases API
+resources, application grants and SCIM role configuration separately from the
+missing historical Cases provisioning journal. It also records independent
+persisted-case audit status from the real P010 browser run, requiring a case
+UUID and current-source/runtime evidence; no mock or historical evidence may
+substitute. See [CIAM P0.11–P0.12 gates](docs/CIAM_P011_P012_GATES.md).
+
+Use `offline-test`, `security-audit`, `inventory` and `readiness` from the
+existing v10 CLI. The real WSO2/browser `live-acceptance` remains a separate,
+operator-authorized, business-mutating activity. It is **not** run by the
+installer, and missing ownership history or incomplete live negative testing
+must remain `BLOCKED`. No tenant, API, role or journal is re-created.
+
 ## Contents
 
 - [Architecture, Carbon Super, tenancy and ownership](#ciam-doc-docs-ciam-v5-architecture-and-ownership-md)
