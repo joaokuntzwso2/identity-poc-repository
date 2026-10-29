@@ -51,6 +51,18 @@ def require(condition, code):
         raise Refuse(code)
 
 
+
+def _valid_case_resource_urn(value):
+    """Accept RFC 8141-style URN identifiers; no query/fragment or malformed escapes."""
+    import re as _re
+    if not isinstance(value, str):
+        return False
+    m = _re.fullmatch(r"urn:([A-Za-z0-9][A-Za-z0-9-]{0,30}[A-Za-z0-9]):([A-Za-z0-9._~!$&'()*+,;=:@%/-]+)", value, flags=_re.ASCII)
+    if not m or m.group(1).lower() == 'urn':
+        return False
+    nss = m.group(2)
+    return '%' not in _re.sub(r'%[0-9A-Fa-f]{2}', '', nss)
+
 def case_identifier():
     value = os.getenv('WSO2_CIAM_CASES_API_IDENTIFIER', '')
     # This precise URN is the existing BFF's verified API audience. Do not
@@ -58,8 +70,7 @@ def case_identifier():
     if value == 'urn:ciampoc:service-requests:v1':
         return value
     parsed = urllib.parse.urlsplit(value)
-    require(value and len(value) <= 512 and value == value.strip() and
-            parsed.scheme == 'https' and parsed.hostname and
+    require(value and len(value) <= 512 and value == value.strip() and((parsed.scheme == 'https' and parsed.hostname) or _valid_case_resource_urn(value)) and
             not parsed.username and not parsed.password and not parsed.query and not parsed.fragment,
             'EXPLICIT_HTTPS_OR_PINNED_CASE_API_IDENTIFIER_REQUIRED')
     return value
