@@ -1,0 +1,27 @@
+/* P1.13–16: accessible business workspace on canonical live v5 pages. */
+.v5-skip-link{position:absolute;top:-110px;left:1rem;z-index:9999;padding:.7rem 1rem;background:#fff;color:#111;border:2px solid #111;text-decoration:none}
+.v5-skip-link:focus{top:.5rem}
+.v5-business-records{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:1rem;margin-top:1.25rem}
+.v5-business-record{border:1px solid var(--line,#c4cdd6);border-radius:14px;padding:1.25rem;background:var(--paper,#fff);display:grid;align-content:start;gap:.8rem;min-width:0}
+.v5-business-record-head{display:flex;align-items:flex-start;justify-content:space-between;gap:.7rem;flex-wrap:wrap}
+.v5-business-record h3{font-size:1.1rem;overflow-wrap:anywhere;margin:0}
+.v5-business-record p{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+.v5-business-state{font-size:.8rem;font-weight:750;padding:.25rem .6rem;border-radius:100px;border:1px solid currentColor}
+.v5-business-record details{border-top:1px solid var(--line,#d1d9df);padding-top:.75rem}
+.v5-business-record summary{cursor:pointer;font-weight:700;min-height:2rem}
+.v5-business-record dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:.35rem .7rem;margin:.75rem 0}
+.v5-business-record dt{font-weight:700}
+.v5-business-record dd{margin:0;overflow-wrap:anywhere}
+.v5-business-record li{margin:.25rem 0}
+.v5-case-controls{margin:1rem 0;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+.v5-case-form{display:grid;grid-template-columns:1fr;gap:.55rem;max-width:100%}
+.v5-case-form label,.v5-case-controls label{font-weight:700}
+.v5-case-controls select,.v5-case-form input,.v5-case-form textarea{display:block;width:100%;min-height:2.7rem;border:1px solid #768590;border-radius:7px;padding:.65rem .75rem;background:var(--paper,#fff);color:var(--ink,#1a2733)}
+.v5-case-controls select{width:auto;min-width:15rem}
+.v5-evidence-note{font-size:.9rem;color:var(--sub,#465564);margin:.75rem 0;line-height:1.55}
+#v5-case-result{min-height:1.6em;overflow-wrap:anywhere}
+.v5-presenter-guide ol{padding-left:1.5rem}
+.v5-presenter-guide li{margin-bottom:.75rem;line-height:1.6}
+.retail-site :is(button,a,input,textarea,select,summary):focus-visible,.app-shell :is(button,a,input,textarea,select,summary):focus-visible{outline:3px solid #087cb4;outline-offset:3px}
+@media(max-width:640px){.v5-business-records{grid-template-columns:minmax(0,1fr)}.v5-business-record{padding:1rem}.v5-case-controls{align-items:stretch;flex-direction:column}.v5-case-controls select{width:100%;min-width:0}}
+@media(prefers-reduced-motion:reduce){.v5-business-record,.v5-business-record *{transition:none!important;scroll-behavior:auto!important}}

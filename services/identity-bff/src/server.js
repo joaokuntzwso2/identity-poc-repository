@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { random, fingerprint, discover, makeAuthorizationUrl, exchangeAuthorizationCode, verifyIdToken, safeEqual } from './oidc.js';
 import { DemoSessionStore } from './session-store.js';
+import { endChannelSession } from './channel-logout.js';
 import { readAuthorizationResponse } from './auth-callback-guards.js';
 import { appConfig, clients } from './config.js';
 import { inspectAccessToken, requireAuthorityForClient } from './wso2-authority.js';
@@ -198,6 +199,20 @@ async function api(req, res, u, s) {
     if (req.headers.origin !== appConfig.origin || !req.headers['x-csrf-token'] ||
         !safeEqual(req.headers['x-csrf-token'], s.csrf))
       return reply(res, 403, { error: 'csrf_or_origin_denied' });
+    // Optional registered client: close only that BFF channel. Without a client,
+    // the legacy endpoint retains its original all-local-channels semantics.
+    const requested = u.searchParams.getAll('client');
+    if (requested.length > 1) return reply(res, 400, { error: 'invalid_client' });
+    if (requested.length === 1) {
+      const key = requested[0];
+      if (!endChannelSession(s, key, clients))
+        return reply(res, 400, { error: 'invalid_client' });
+      // Rotate the browser's shared session identifier without destroying the
+      // other authenticated channels. WSO2's SSO session remains untouched.
+      sessionStore.rotate(s, res);
+      return reply(res, 200, { status: 'BFF_CLIENT_SESSION_DESTROYED', client: key,
+        wso2Session: 'NOT_TERMINATED', accessTokenRevocation: 'NOT_VERIFIED' });
+    }
     sessionStore.destroy(s, res);
     return reply(res, 200, { status: 'BFF_SESSION_DESTROYED',
       wso2Session: 'NOT_TERMINATED', accessTokenRevocation: 'NOT_VERIFIED' });
@@ -226,6 +241,7 @@ const STATIC = Object.freeze({
   '/live-experience-v5.js': 'live-experience-v5.js',
   '/live-experience-v5.css': 'live-experience-v5.css',
   '/live-retail-v5.css': 'live-retail-v5.css',
+  '/live-workspace-p113.css': 'live-workspace-p113.css',
   '/live-brand-v3.js': 'live-brand-v3.js',
   '/live-cases-v4-ui.js': 'live-cases-v4-ui.js',
   '/live-brand-v3.css': 'live-brand-v3.css',
@@ -335,7 +351,7 @@ async function handle(req, res) {
             issuer:proof.issuer,subject:proof.subject,authTime:proof.authTime});
           s.logins[key] = {...candidate,verifiedAt:new Date().toISOString()};
           sessionStore.rotate(s,res);
-          return redirect(res,`${proof.returnTo}?client=${encodeURIComponent(key)}&approval=check`);
+          return redirect(res,`${proof.returnTo}?client=${encodeURIComponent(key)}&approval=check&caseId=${encodeURIComponent(proof.caseId)}`);
         } catch (e) {
           // No success redirect and no business write after any failed assurance check.
           return reply(res,e.status||403,{error:e.code||'wso2_stepup_not_verified',allowed:false,...(e.attestationGate?{attestationGate:e.attestationGate}:{})});

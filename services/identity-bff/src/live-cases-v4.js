@@ -41,12 +41,14 @@ function materialize(brand) {
     if (e.action === 'created') {
       if (result.has(e.id)) throw new Error('DUPLICATE_CASE_ID');
       result.set(e.id, { id: e.id, title: e.title, description: e.description,
-        owner: e.actor, createdAt: e.at, status: 'OPEN', approvedAt: null });
+        owner: e.actor, createdAt: e.at, status: 'OPEN', approvedAt: null,
+        history: [{ action: 'created', at: e.at }] });
     } else {
       const previous = result.get(e.id);
       if (!previous || previous.status !== 'OPEN') throw new Error('INVALID_APPROVAL_EVENT');
       previous.status = 'APPROVED'; previous.approvedAt = e.at;
       previous.approvedBy = e.actor;
+      previous.history.push({ action: 'approved', at: e.at });
     }
   }
   return result;
