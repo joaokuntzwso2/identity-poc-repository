@@ -122,3 +122,32 @@ On a local checkout, run `./scripts/ciam-v10.sh offline-test`,
 Running `live-acceptance` creates a persistent business record and still
 requires a separately authorized operator to interact with genuine WSO2 login
 and TOTP; it is never launched by the source installer.
+
+## Increment v29: additional real-BFF negative business probes
+
+The existing operator-assisted P010 browser runner now executes eleven exact-status
+negative checks against **real WSO2-authenticated sessions** and the live local BFF:
+customer approval scope (`403`), anonymous case read and create (`401`), cross-tenant
+and wrong-client reads (`403`), customer creation without CSRF (`403`), malformed
+creation (`400`), wrong approval method (`405`), seller creation (`403`), seller
+cross-tenant read (`403`), and repeat approval of an already-approved case (`409`).
+
+Both creation-denial probes deliberately send **invalid case fields**, preventing
+accidental persistent record creation even if an earlier authorization boundary
+fails. The returned HTTP status is recorded without bodies, tokens, cookies,
+case contents or login credentials. The actual successful customer case
+creation and genuine seller TOTP approval **still require** the explicit
+`CIAM_P011_LIVE_CONFIRM=INTERACTIVE_WSO2_AND_PERSISTENT_CASE_WRITE` approval and
+interactive WSO2 login/TOTP. This installation **does not launch it**.
+
+Readiness reports these eleven statuses as separate `BROWSER_E2E` gates only
+when a fresh, checksummed, same-commit, same-runtime P010 acceptance record
+is independently attested. Missing or stale data is `BLOCKED`; observed
+unexpected statuses are `FAIL`. The offline Node tests validate only the
+contract logic and **never** count as live evidence.
+
+**`FULL_LIVE_NEGATIVE_MATRIX` stays BLOCKED.** Genuine callback replay, canceled
+or stale MFA, token revocation, SSO/logout, and service outage acceptance
+remain unimplemented, and the missing original Cases ownership journal is
+not recovered or substituted by these additions. The new business ledger
+checks require a fresh successful browser run and the exact case UUID.

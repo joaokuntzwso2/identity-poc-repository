@@ -19,10 +19,11 @@ import sys
 import urllib.error
 import urllib.request
 if __package__:
-    from . import core, live_checks
+    from . import core, live_checks, live_denials
 else:
     import core
     import live_checks
+    import live_denials
 
 REPO=Path(__file__).resolve().parents[3]
 HOME=Path(os.environ.get('CIAM_V10_HOME',str(Path.home()/'wso2-ciam-v10'))).expanduser()
@@ -57,7 +58,8 @@ def offline_test():
         'P011_SELF_UNIT':summary_run([sys.executable,'-m','unittest','discover','-s','deploy/ciam-v10/p011_p012/tests','-p','test_*.py','-v'],timeout=65),
         'EXISTING_BFF_NODE_UNIT_MOCKED_INTEGRATION':summary_run(['npm','test'],timeout=240),
         'EXISTING_V10_PYTHON_UNIT':summary_run([sys.executable,CLI,'test'],timeout=200),
-        'P010_BROWSER_DRIVER_SYNTAX_STATIC':summary_run(['node','--check','scripts/ciam-p010-interactive-acceptance.mjs'],timeout=30)
+        'P010_BROWSER_DRIVER_SYNTAX_STATIC':summary_run(['node','--check','scripts/ciam-p010-interactive-acceptance.mjs'],timeout=30),
+        'P011_CASE_NEGATIVE_CONTRACT_UNIT':summary_run(['node','--test','scripts/ciam-p011-negative-observations.test.mjs'],timeout=30)
     }
     # Existing Python/Node tests may use local doubles; they do not prove live authentication.
     status='NOT_READY' if any(x['status']=='FAIL' for x in checks.values()) else 'BLOCKED' if any(x['status']=='BLOCKED' for x in checks.values()) else 'READY'
@@ -271,25 +273,19 @@ def report(inventory_only=False):
         gates.append(core.gate('REAL_BROWSER_TOTP','PASS' if live_ok else 'BLOCKED','BROWSER_E2E','fresh four-client authenticated WSO2 and real TOTP acceptance',live_reason))
         # P010 now adds three real-denial assertions without changing identity
         # state. They supplement, never replace, the mandatory full matrix.
-        live_denials={}
+        live_denials_evidence={}
         if live_ok:
             try:
                 attestation=sorted(INSPECTION.glob('p011-live-attested-*.json'),reverse=True)[0]
                 attested=json.loads(core.read_private(attestation))
                 ref=attested['references'][0]
                 original=json.loads(core.read_private(INSPECTION/ref['artifact']))
-                live_denials=original.get('denials',{})
-                if not isinstance(live_denials,dict):live_denials={}
+                live_denials_evidence=original.get('denials',{})
+                if not isinstance(live_denials_evidence,dict):live_denials_evidence={}
             except (OSError,ValueError,KeyError,TypeError,IndexError):pass
-        for name,field,expected in (
-            ('LIVE_CUSTOMER_APPROVAL_DENIAL','customerApprovalHttp',403),
-            ('LIVE_ANONYMOUS_CASE_DENIAL','anonymousCasesHttp',401),
-            ('LIVE_CROSS_CLIENT_DENIAL','wrongTenantClientHttp',403)):
-            seen=live_denials.get(field)
-            verdict='PASS' if seen==expected and live_ok else 'FAIL' if live_ok and seen is not None else 'BLOCKED'
-            gates.append(core.gate(name,verdict,'BROWSER_E2E',expected,
-                'FRESH_LIVE_HTTP_DENIAL_VERIFIED' if verdict=='PASS' else 'MISSING_OR_WRONG_LIVE_DENIAL'))
-        # These do not cover canceled MFA, replay, revocation, or SSO/logout.
+        for name,verdict,expected,reason in live_denials.assess(live_denials_evidence,live_ok):
+            gates.append(core.gate(name,verdict,'BROWSER_E2E',expected,reason))
+        # More real business denials, but still not canceled MFA, replay, revocation or SSO/logout.
         gates.append(core.gate('FULL_LIVE_NEGATIVE_MATRIX','BLOCKED','LIVE_AUTHENTICATION',
                 'callback replay, stale/canceled MFA, revocation, self-approval, SSO/logout and outage tested live',
                 'NOT_IMPLEMENTED_IN_EXISTING_OPERATOR_RUNNER'))

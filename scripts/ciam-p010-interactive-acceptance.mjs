@@ -26,13 +26,13 @@ function record(client,me){const p=me.clients?.[client];return {
  subjectFingerprint:p?.subjectFingerprint||null,scopes:Array.isArray(p?.permissions)?p.permissions.filter(s=>s.startsWith('ciam:cases:')):[],
  idTokenAssurance:{acrPresent:Boolean(p?.acrFromVerifiedIdToken),amrPresent:Boolean(p?.amrFromVerifiedIdToken?.length)},
  loginVerified:p?.authenticated===true,at:new Date().toISOString()};}
-async function api(page,method,path,payload){return page.evaluate(async ({method,path,payload})=>{
+async function api(page,method,path,payload,{csrf=true}={}){return page.evaluate(async ({method,path,payload,csrf})=>{
  const me=await (await fetch('/api/identity/me',{credentials:'same-origin',cache:'no-store'})).json();
  const res=await fetch(path,{method,credentials:'same-origin',cache:'no-store',headers:{
-  ...(method==='POST'?{'content-type':'application/json','x-csrf-token':me.csrf}:{})},
+  ...(method==='POST'?{'content-type':'application/json',...(csrf?{'x-csrf-token':me.csrf}:{})}:{})},
   body:method==='POST'?JSON.stringify(payload||{}):undefined});
  const body=await res.json().catch(()=>({error:'invalid_json'}));return {status:res.status,body};
-},{method,path,payload});}
+},{method,path,payload,csrf});}
 async function authenticate(key,brand,channel,note,evidenceKey=key){
  activeStage='LOGIN_'+key.toUpperCase().replaceAll('-', '_'); activeClient=key;
  const context=await browser.newContext({ignoreHTTPSErrors:false,acceptDownloads:false});
@@ -87,24 +87,36 @@ try{
  const own=await api(customer.page,'GET','/api/brands/aurora/cases?client=aurora-web');
  evidence.cases.ownerReadHttp=own.status;
  if(own.status!==200||!own.body.records?.some(r=>r.id===caseId&&r.status==='OPEN'))throw Error('OWNER_VISIBILITY_FAILED');
+ if(own.body.visibility!=='OWNER_ONLY')throw Error('CUSTOMER_READ_MUST_BE_OWNER_ONLY');
+ // Rejected probes use deliberately invalid content to prevent accidental
+ // persistent creation if a security boundary unexpectedly fails.
+ const noCsrf=await api(customer.page,'POST','/api/brands/aurora/cases?client=aurora-web',
+   {title:'x',description:'invalid sentinel'},{csrf:false});
+ assertCaseDenial(evidence.denials,'customerMissingCsrfHttp',noCsrf.status);
+ const malformed=await api(customer.page,'POST','/api/brands/aurora/cases?client=aurora-web',
+   {title:'x',description:'invalid sentinel'});
+ assertCaseDenial(evidence.denials,'malformedCaseHttp',malformed.status);
+ const wrongMethod=await api(customer.page,'GET',
+   `/api/brands/aurora/cases/${caseId}/approve?client=aurora-web`);
+ assertCaseDenial(evidence.denials,'customerWrongMethodHttp',wrongMethod.status);
  const denied=await api(customer.page,'GET','/api/brands/brisa/cases?client=aurora-web');
- evidence.denials.crossTenantHttp=denied.status;
- if(denied.status!==403)throw Error('CROSS_TENANT_NOT_DENIED');
+ assertCaseDenial(evidence.denials,'crossTenantHttp',denied.status);
  // Negative checks execute against the actual BFF and real WSO2-bound session.
  // These are additional to (not a replacement for) the full P0.11 live matrix.
  const forbiddenApproval=await api(customer.page,'POST',
    `/api/brands/aurora/cases/${caseId}/approve?client=aurora-web`);
- evidence.denials.customerApprovalHttp=forbiddenApproval.status;
- if(forbiddenApproval.status!==403)throw Error('CUSTOMER_APPROVAL_SCOPE_NOT_DENIED');
+ assertCaseDenial(evidence.denials,'customerApprovalHttp',forbiddenApproval.status);
  const wrongClient=await api(customer.page,'GET','/api/brands/aurora/cases?client=brisa-web');
- evidence.denials.wrongTenantClientHttp=wrongClient.status;
- if(wrongClient.status!==403)throw Error('CROSS_TENANT_CLIENT_NOT_DENIED');
+ assertCaseDenial(evidence.denials,'wrongTenantClientHttp',wrongClient.status);
  const anonymousContext=await browser.newContext({ignoreHTTPSErrors:false});
  try {
    const anonymousResponse=await anonymousContext.request.get(
      `${base}/api/brands/aurora/cases?client=aurora-web`,{timeout:10000});
-   evidence.denials.anonymousCasesHttp=anonymousResponse.status();
-   if(anonymousResponse.status()!==401)throw Error('ANONYMOUS_CASES_NOT_DENIED');
+   assertCaseDenial(evidence.denials,'anonymousCasesHttp',anonymousResponse.status());
+   const anonymousPost=await anonymousContext.request.post(
+     `${base}/api/brands/aurora/cases?client=aurora-web`,
+     {data:{title:'x',description:'invalid sentinel'},timeout:10000});
+   assertCaseDenial(evidence.denials,'anonymousCreateHttp',anonymousPost.status());
  }finally{await anonymousContext.close();}
 
  activeStage='LOGIN_OTHER_CLIENTS';
@@ -118,6 +130,11 @@ try{
  evidence.cases.sellerReviewHttp=queue.status;
  if(queue.status!==200||queue.body.visibility!=='BRAND_REVIEW'||!queue.body.records.some(r=>r.id===caseId&&r.status==='OPEN'))
    throw Error('SELLER_REVIEW_NOT_VERIFIED');
+ const sellerDeniedCreate=await api(seller.page,'POST','/api/brands/aurora/cases?client=aurora-web',
+   {title:'x',description:'invalid sentinel'});
+ assertCaseDenial(evidence.denials,'sellerCreateHttp',sellerDeniedCreate.status);
+ const sellerDeniedTenant=await api(seller.page,'GET','/api/brands/brisa/cases?client=aurora-web');
+ assertCaseDenial(evidence.denials,'sellerCrossTenantHttp',sellerDeniedTenant.status);
  activeStage='STEPUP_START';
  const start=await api(seller.page,'POST',`/api/brands/aurora/cases/${caseId}/approve?client=aurora-web`);
  evidence.cases.stepUpStartHttp=start.status;
@@ -135,6 +152,11 @@ try{
  evidence.cases.customerAfterHttp=ownerAfter.status;
  if(ownerAfter.status!==200||!ownerAfter.body.records.some(r=>r.id===caseId&&r.status==='APPROVED'))
    throw Error('CUSTOMER_POST_APPROVAL_STATE_NOT_VERIFIED');
+ // A previously approved case must not trigger a second TOTP transaction.
+ const duplicate=await api(seller.page,'POST',
+   `/api/brands/aurora/cases/${caseId}/approve?client=aurora-web`);
+ assertCaseDenial(evidence.denials,'duplicateApprovalHttp',duplicate.status);
+ if(!caseNegativeMatrix(evidence.denials))throw Error('INCOMPLETE_NEGATIVE_CASE_MATRIX');
  activeStage='CASES_APPROVAL_OWNER_READBACK';
  evidence.status='PASS_REAL_WSO2_FOUR_CLIENTS_AND_TOTP_APPROVAL';
  console.log('REAL_WSO2_E2E_VERIFIED_WITH_OPERATOR_INTERACTION');
