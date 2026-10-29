@@ -5,6 +5,7 @@ no missing provisioning journal is created, inferred, or declared verified.
 """
 from __future__ import annotations
 import importlib.util
+import ast
 import json
 import os
 from pathlib import Path
@@ -13,8 +14,9 @@ import stat
 
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 HASH = re.compile(r'^[a-f0-9]{64}$')
-MARKER = re.compile(r'^ciam-v10-cases-[a-f0-9]{32}$')
 PINNED_IDENTIFIER = 'urn:ciampoc:service-requests:v1'
+# Existing-resource contract (not the separate create-new-resource bootstrap).
+PINNED_RESOURCE_NAME = 'CIAM Service Requests API'
 
 class Blocked(Exception):
     """Safe, predefined failure codes only (never include remote values)."""
@@ -43,19 +45,45 @@ def verify_role_detail(detail, *, role_id, name, app_id, expected_users, expecte
 
 
 def verify_resource_detail(item, detail, scopes, *, identifier, name, resource_id_validator):
-    require(isinstance(item, dict) and isinstance(detail,dict), 'RESOURCE_NOT_OBJECT')
+    require(isinstance(item, dict) and isinstance(detail, dict), 'RESOURCE_NOT_OBJECT')
     rid = item.get('id')
-    require(isinstance(rid,str) and resource_id_validator.fullmatch(rid), 'RESOURCE_ID_INVALID')
-    require(detail.get('id') == rid and detail.get('identifier') == identifier and
-            detail.get('name') == name and detail.get('requiresAuthorization') is True,
-            'RESOURCE_DETAIL_MISMATCH')
-    # The marker is verified as a live attribute, NOT as proof of historical ownership.
-    require(isinstance(detail.get('description'),str) and MARKER.fullmatch(detail['description']),
-            'RESOURCE_OWNER_MARKER_SHAPE_MISMATCH')
-    require(isinstance(scopes,list) and all(isinstance(x,str) for x in scopes) and
+    require(isinstance(rid, str) and resource_id_validator.fullmatch(rid), 'RESOURCE_ID_INVALID')
+    require(detail.get('id') == rid, 'RESOURCE_ID_MISMATCH')
+    require(detail.get('identifier') == identifier, 'RESOURCE_IDENTIFIER_MISMATCH')
+    require(detail.get('name') == name, 'RESOURCE_NAME_MISMATCH')
+    require(detail.get('requiresAuthorization') is True,
+            'RESOURCE_REQUIRES_AUTHORIZATION_MISMATCH')
+    # Existing live APIs have independent provisioning history. A new-resource
+    # ownerMarker cannot be demanded from or inferred about that resource.
+    # Description is non-authoritative metadata, not a grant or ownership proof.
+    require(detail.get('description') is None or isinstance(detail.get('description'), str),
+            'RESOURCE_DESCRIPTION_SHAPE_INVALID')
+    require(isinstance(scopes, list) and all(isinstance(x, str) for x in scopes) and
             len(scopes) == len(set(scopes)), 'RESOURCE_SCOPE_SHAPE')
     return rid
 
+
+def verify_existing_resource_contract(repo):
+    """Statically pin the existing-resource stage, without executing its code.
+
+    Any change in its pinned audience or name must be explicitly reviewed.
+    """
+    path = Path(repo) / 'deploy/ciam-v10/cases-rbac/existing_roles.py'
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size < 200000,
+            'EXISTING_RESOURCE_CONTRACT_UNAVAILABLE')
+    try:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+    except (SyntaxError, UnicodeError, OSError):
+        raise Blocked('EXISTING_RESOURCE_CONTRACT_UNREADABLE') from None
+    fields = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            if node.targets[0].id in ('IDENTIFIER', 'RESOURCE_NAME') and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                require(node.targets[0].id not in fields, 'EXISTING_RESOURCE_CONTRACT_AMBIGUOUS')
+                fields[node.targets[0].id] = node.value.value
+    require(fields == {'IDENTIFIER': PINNED_IDENTIFIER, 'RESOURCE_NAME': PINNED_RESOURCE_NAME},
+            'EXISTING_RESOURCE_CONTRACT_DRIFT')
+    return True
 
 def independent_rbac_readback(case_module, client, context, identifier=PINNED_IDENTIFIER):
     """Check live WSO2 resource, grants, SCIM roles & users; NEVER assume ownership.
@@ -77,7 +105,7 @@ def independent_rbac_readback(case_module, client, context, identifier=PINNED_ID
         s = c.read(client,c.path(brand,'/api/server/v1/api-resources/'+str(rid)+'/scopes'),auth)
         rows = c.list_items(s,'scopes')
         names = [x if isinstance(x,str) else x.get('name') if isinstance(x,dict) else None for x in rows]
-        verify_resource_detail(item,detail,names,identifier=identifier,name=c.API_NAME,
+        verify_resource_detail(item,detail,names,identifier=identifier,name=PINNED_RESOURCE_NAME,
                                resource_id_validator=c.resources.ID)
         require(set(names) == set(c.SCOPES), 'RESOURCE_SCOPES_MISMATCH')
         roles_checked = 0
@@ -126,6 +154,7 @@ def load_cases_module(repo):
 def run_cases_readback(repo):
     """All exceptions are sanitized at the caller; no raw WSO2 responses logged."""
     try:
+        verify_existing_resource_contract(repo)
         c=load_cases_module(repo)
         # No private journal of Cases ownership is needed for configuration verification.
         context=c.context()

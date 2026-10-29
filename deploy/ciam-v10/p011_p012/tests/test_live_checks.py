@@ -36,17 +36,55 @@ class RoleAndResourceTests(unittest.TestCase):
         with self.assertRaisesRegex(live.Blocked,'USERS_MISMATCH'):
             live.verify_role_detail(role,role_id='role1',name='Customer',app_id='app1',
                                     expected_users=['user1'],expected_scopes=[])
-    def test_resource_owner_marker_is_not_provenance(self):
-        item={'id':'resource1'}
-        detail={'id':'resource1','identifier':live.PINNED_IDENTIFIER,'name':'CIAM v10 Cases API',
-                'requiresAuthorization':True,'description':'ciam-v10-cases-'+'a'*32}
+    def test_existing_resource_name_is_separate_from_new_resource_bootstrap(self):
         import re
+        item={'id':'resource1'}
+        detail={'id':'resource1','identifier':live.PINNED_IDENTIFIER,
+                'name':live.PINNED_RESOURCE_NAME,'requiresAuthorization':True,
+                'description':'Legacy CIAM Service Requests API'}
         self.assertEqual(live.verify_resource_detail(item,detail,['ciam:cases:read'],
-               identifier=live.PINNED_IDENTIFIER,name='CIAM v10 Cases API',resource_id_validator=re.compile('.+')),'resource1')
-        detail['description']='arbitrary'
-        with self.assertRaisesRegex(live.Blocked,'OWNER_MARKER'):
-            live.verify_resource_detail(item,detail,['ciam:cases:read'],identifier=live.PINNED_IDENTIFIER,
-                                        name='CIAM v10 Cases API',resource_id_validator=re.compile('.+'))
+            identifier=live.PINNED_IDENTIFIER,name=live.PINNED_RESOURCE_NAME,
+            resource_id_validator=re.compile('.+')),'resource1')
+        # Existing-resource metadata is not evidence of journal ownership.
+        detail['description']=None
+        self.assertEqual(live.verify_resource_detail(item,detail,[],
+            identifier=live.PINNED_IDENTIFIER,name=live.PINNED_RESOURCE_NAME,
+            resource_id_validator=re.compile('.+')),'resource1')
+        detail['description']={'owner':'fake'}
+        with self.assertRaisesRegex(live.Blocked,'RESOURCE_DESCRIPTION_SHAPE_INVALID'):
+            live.verify_resource_detail(item,detail,[],identifier=live.PINNED_IDENTIFIER,
+                name=live.PINNED_RESOURCE_NAME,resource_id_validator=re.compile('.+'))
+
+    def test_resource_independent_security_contract_field_failures(self):
+        import re
+        item={'id':'resource1'}
+        correct={'id':'resource1','identifier':live.PINNED_IDENTIFIER,
+                 'name':live.PINNED_RESOURCE_NAME,'requiresAuthorization':True}
+        for field, value, reason in (
+            ('id', 'resource2','RESOURCE_ID_MISMATCH'),
+            ('identifier', 'urn:attacker:resource','RESOURCE_IDENTIFIER_MISMATCH'),
+            ('name','CIAM v10 Cases API','RESOURCE_NAME_MISMATCH'),
+            ('requiresAuthorization', False,'RESOURCE_REQUIRES_AUTHORIZATION_MISMATCH'),
+        ):
+            detail={**correct,field:value}
+            with self.subTest(field=field), self.assertRaisesRegex(live.Blocked,reason):
+                live.verify_resource_detail(item,detail,[],identifier=live.PINNED_IDENTIFIER,
+                     name=live.PINNED_RESOURCE_NAME,resource_id_validator=re.compile('.+'))
+
+    def test_existing_resource_contract_rejects_drift(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target=Path(temp)/'deploy/ciam-v10/cases-rbac/existing_roles.py'
+            target.parent.mkdir(parents=True)
+            target.write_text("IDENTIFIER = 'urn:ciampoc:service-requests:v1'\nRESOURCE_NAME = 'CIAM Service Requests API'\n")
+            self.assertTrue(live.verify_existing_resource_contract(temp))
+            target.write_text("IDENTIFIER = 'urn:ciampoc:service-requests:v1'\nRESOURCE_NAME = 'CIAM v10 Cases API'\n")
+            with self.assertRaisesRegex(live.Blocked,'CONTRACT_DRIFT'):
+                live.verify_existing_resource_contract(temp)
+            target.unlink()
+            target.symlink_to(Path(__file__))
+            with self.assertRaisesRegex(live.Blocked,'CONTRACT_UNAVAILABLE'):
+                live.verify_existing_resource_contract(temp)
+
     def test_unverified_source_blocks(self):
         with self.assertRaisesRegex(live.Blocked,'SOURCE_UNAVAILABLE'):
             live.load_cases_module('/nonexistent-ciam-repo')
@@ -131,7 +169,7 @@ class MockedConfigurationTests(unittest.TestCase):
         def read(client,path,auth):
             if '/api-resources/resource1/scopes' in path:return list(scopes)
             if '/api-resources/resource1' in path:
-                return {'id':'resource1','identifier':live.PINNED_IDENTIFIER,'name':fake.API_NAME,
+                return {'id':'resource1','identifier':live.PINNED_IDENTIFIER,'name':live.PINNED_RESOURCE_NAME,
                          'description':'ciam-v10-cases-'+'b'*32,'requiresAuthorization':True}
             if '/applications/' in path:
                 return {'id':'app1','name':'App 1','associatedRoles':{'allowedAudience':'APPLICATION'}}
