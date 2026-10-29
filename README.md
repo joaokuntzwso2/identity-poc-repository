@@ -3067,3 +3067,24 @@ For the demonstration and evidence boundaries see
 Use an authorized operator and the existing private credential helper; never
 commit credentials, TOTP QR codes, token values, cookies or evidence JSON.
 <!-- CIAM_P008_P010_LIVE_CHECKPOINT_END -->
+<!-- CIAM_P011_P012_GATES_START -->
+## P0.11–P0.12 — current-source CIAM gates and guarded provisioning
+
+This incremental implementation builds on the existing `scripts/ciam-v10.sh` CLI, P0.08–P0.10 Playwright runner, and journaled authority bootstrap. See [the complete acceptance coverage, evidence classes, secret audit and guarded write runbook](docs/CIAM_P011_P012_GATES.md). This checkpoint **does not certify full live negative coverage**: missing or stale live results are `BLOCKED` (never `READY`).
+
+```bash
+./scripts/ciam-v10.sh offline-test       # existing Node/Python tests + new safety suite, no WSO2 dependency
+./scripts/ciam-v10.sh security-audit    # scan Git-index blobs and private sanitized evidence separately
+./scripts/ciam-v10.sh inventory         # read-only WSO2/BFF/PKCE/runtime inventory
+./scripts/ciam-v10.sh readiness         # private JSON + Markdown; READY/NOT_READY/BLOCKED
+```
+
+Only after separate operator approval to create a **new** persistent case and authenticate with real WSO2 TOTP:
+
+```bash
+CIAM_P011_LIVE_CONFIRM=INTERACTIVE_WSO2_AND_PERSISTENT_CASE_WRITE \
+  ./scripts/ciam-v10.sh live-acceptance
+```
+
+Existing authority-only provisioning can be *planned* without writes using `WSO2_CIAM_V10_ROLE_API=v3 ./scripts/ciam-v10.sh provision-plan`; the separately approved `provision-apply` requires the private plan path and exact `CIAM_P012_APPLY_CONFIRM=APPLY_THIS_FRESH_AUTHORIZATION_PLAN`. The approval is one-use, 10-minute-bound, journaled before writes and followed by read-only reconciliation. Do not use it to recreate already-provisioned tenants, clients or Cases roles. Existing private credentials and evidence stay under `~/wso2-ciam-v10/` with mode `0600`; neither the installer nor CI initializes a WSO2 lab.
+<!-- CIAM_P011_P012_GATES_END -->
