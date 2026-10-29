@@ -5,6 +5,7 @@ Read-only by default; the only mutating authority operation is a separately
 approved, single-use wrapper around the repository's existing journaled stage.
 """
 from __future__ import annotations
+import ast
 import datetime as dt
 import importlib.util
 import json
@@ -100,6 +101,54 @@ def health():
     except (OSError,ValueError,urllib.error.URLError,TypeError,AttributeError):bff=False;configured4=False
     return {'wso2TcpListener':wso2_listener,'bffAnonymousHttp200':bff,'fourConfiguredClientSlots':configured4}
 
+
+
+def read_only_identity_verify_env():
+    """Extract the verifier's single version pin for a verify-only subprocess.
+
+    This never changes parent environment, any files, or authorization resources.
+    Unsupported/ambiguous guard shapes fail closed. The existing verifier still
+    decides whether the live version, identities, memberships and permissions match.
+    """
+    source=REPO/'deploy/ciam-v10/identities/bootstrap.py'
+    if not source.is_file() or source.is_symlink():return None
+    try:
+        if source.stat().st_size>300000:return None
+        tree=ast.parse(source.read_text('utf-8'))
+    except (OSError,ValueError,SyntaxError,UnicodeError):return None
+    fns=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='context']
+    if len(fns)!=1:return None
+    key='WSO2_CIAM_V10_ROLE_V2_CONFIRM'
+    pins=[]
+    for node in ast.walk(fns[0]):
+        if not (isinstance(node,ast.If) and isinstance(node.test,ast.BoolOp)
+                and isinstance(node.test.op,ast.And)):continue
+        version=confirmation=None
+        for term in node.test.values:
+            if not (isinstance(term,ast.Compare) and len(term.ops)==1
+                    and len(term.comparators)==1):continue
+            a,b=term.left,term.comparators[0]
+            if (isinstance(term.ops[0],ast.Eq) and isinstance(a,ast.Name)
+                    and a.id=='version' and isinstance(b,ast.Constant)
+                    and isinstance(b.value,str)):
+                version=b.value
+            if (isinstance(term.ops[0],ast.NotEq) and isinstance(a,ast.Call)
+                    and isinstance(a.func,ast.Attribute) and a.func.attr=='getenv'
+                    and isinstance(a.func.value,ast.Name) and a.func.value.id=='os'
+                    and len(a.args)==1 and isinstance(a.args[0],ast.Constant)
+                    and a.args[0].value==key and isinstance(b,ast.Constant)
+                    and isinstance(b.value,str)):
+                confirmation=b.value
+        if (version and confirmation and len(version)<=24 and len(confirmation)<=128
+                and any(isinstance(x,ast.Raise) for stmt in node.body for x in ast.walk(stmt))):
+            pins.append((version,confirmation))
+    if len(pins)!=1:return None
+    inherited=os.environ.get(key)
+    if inherited not in (None,'',pins[0][1]):return None
+    env=dict(os.environ)
+    env[key]=pins[0][1]
+    return env
+
 def preflight():
     if not P010_PREFLIGHT.is_file():return False,'P010_PREFLIGHT_MISSING'
     r=execute(['node',P010_PREFLIGHT],timeout=82)
@@ -168,10 +217,16 @@ def report(inventory_only=False):
         ('CASE_RESOURCE_ROLE_READBACK',REPO/'deploy/ciam-v10/cases-rbac/bootstrap.py','verify'),
         ('IDENTITY_MEMBERSHIP_READBACK',REPO/'deploy/ciam-v10/identities/bootstrap.py','verify'),
     ):
-        r=execute([sys.executable,script,action],timeout=100) if script.is_file() else None
+        verify_env=read_only_identity_verify_env() if gate_id=='IDENTITY_MEMBERSHIP_READBACK' else None
+        permitted=script.is_file() and (gate_id!='IDENTITY_MEMBERSHIP_READBACK' or verify_env is not None)
+        r=execute([sys.executable,script,action],env=verify_env,timeout=100) if permitted else None
         passed=bool(r and r.returncode==0)
+        observed=('SOURCE_PINNED_READ_ONLY_VERIFY_PASSED' if passed and verify_env is not None else
+                  'VERIFIED' if passed else
+                  'COMPATIBILITY_PIN_UNVERIFIABLE' if gate_id=='IDENTITY_MEMBERSHIP_READBACK' and verify_env is None else
+                  'INACCESSIBLE_OR_UNVERIFIED')
         gates.append(core.gate(gate_id,'PASS' if passed else 'BLOCKED','LIVE_READBACK',
-            'existing WSO2-managed scoped object readback', 'VERIFIED' if passed else 'INACCESSIBLE_OR_UNVERIFIED'))
+            'existing WSO2-managed scoped object readback',observed))
     # Evaluate tracked source independently from inspection evidence. An unsafe blob is NOT_READY.
     try: audit_result=audit()
     except (ValueError,OSError):audit_result={'status':'BLOCKED','trackedIssues':[],'evidenceIssues':[],'inspectionAvailable':False}
