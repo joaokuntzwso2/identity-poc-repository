@@ -27,7 +27,9 @@
     "ciam:p119:plan": "python3 scripts/wso2/p119-governance-startup.py plan",
     "ciam:p119:apply": "python3 scripts/wso2/p119-governance-startup.py apply",
     "ciam:p119:check": "python3 scripts/wso2/p119-governance-startup.py check",
-    "ciam:p119:rollback": "python3 scripts/wso2/p119-governance-startup.py rollback"
+    "ciam:p119:rollback": "python3 scripts/wso2/p119-governance-startup.py rollback",
+    "demo:preflight": "node scripts/demo-preflight.mjs",
+    "demo:test": "node --test tests/p120-contract.test.mjs"
   },
   "engines": {
     "node": ">=22.0.0"

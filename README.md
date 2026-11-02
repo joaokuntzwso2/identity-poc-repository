@@ -1,5 +1,143 @@
 # Identity Experience Center — WSO2 Identity Server 7.3
 
+<!-- CIAM_P120_P123_CURRENT_START -->
+## P1.20–P1.23 — Demo operations (current)
+
+This section is the **operational authority for the P1.20–P1.23 enhancement**.
+Earlier dated acceptance ledgers and legacy implementation proposals below are historical,
+not proof of a fresh rehearsal. No successful TOTP approval, delegated B2B administration,
+consent persistence, native mobile app, or cross-tenant identity correlation is claimed.
+
+### Start and present safely
+
+Use the existing persistent v10 WSO2 Docker lab at `https://localhost:9444` and the
+live BFF at `http://127.0.0.1:4400`. Do **not** reset tenants/databases, rerun `apply`,
+change MFA policy, or use mock identity fallbacks. The customer-facing UI is served by
+`services/identity-bff/src/server.js` and `live-experience-v5.html` (not the standalone
+Vite `src/main.tsx` preview). The additive `live-premium-p120.*` assets provide the
+responsive design layer, keyboard support, and an **Evidência ao vivo** dialog.
+The original OIDC callback, protected APIs, and case persistence contract remain unchanged.
+An actual approval HTTP 202 opens the WSO2 OIDC step-up only after HTTPS/issuer and
+required PKCE/state parameters are checked; return UI reads the persisted approval
+from the business API instead of treating a redirect query as proof of MFA.
+Restart the **existing BFF process only** after source deployment so its in-memory
+startup provenance matches the release. Do not restart/reinitialize WSO2 merely for UI changes.
+
+```bash
+cd "$HOME/wso2mi/Projects/Demo/poc-implementation"
+git rev-parse HEAD                       # record the approved release SHA
+git status --short                       # do not demo unreviewed changes
+npm run demo:test                       # source integrity/zero-mock contracts
+DEMO_EXPECTED_COMMIT="$(git rev-parse HEAD)" npm run demo:preflight
+# Read-only WSO2 management verification (requires the existing private setup):
+DEMO_EXPECTED_COMMIT="$(git rev-parse HEAD)" npm run demo:preflight -- --deep-readback
+# Attended four real browser OIDC flows, no password captured by tooling:
+DEMO_EXPECTED_COMMIT="$(git rev-parse HEAD)" npm run demo:preflight -- --rehearse
+```
+
+**Report rule:** `READY` only when every gate has fresh evidence; `NOT_READY` means a
+verified failure (dirty tree, mismatched runtime files, broken page, missing authority,
+failed tests), while `BLOCKED` means evidence was not obtained. The preflight always
+keeps business writes, destructive provisioning, admin changes and token disclosure out
+of scope. It intentionally reports **BLOCKED** for positive/negative MFA approvals,
+case mutation/persistence, database consistency, full WCAG 2.2 AA audit, and unperformed
+live login flows. Such conditions must not silently turn green. Reports and anonymous
+screenshots are saved privately in `~/Downloads/ciam-demo-evidence/`; review before sharing.
+The `--offline` option executes source/tests only, never live proofs.
+
+### Architecture and access boundaries
+
+```text
+Browser /lab, /portal/{aurora,brisa}/{web,mobile}
+  | same-origin HttpOnly BFF session; no browser-side bearer tokens
+  v
+Node BFF :4400  -- OIDC code + PKCE --> WSO2 IS 7.3 :9444
+  |                                      | carbon.super (server administration)
+  | -- introspection, UserInfo --------- | aurora.identity.test (web, app clients)
+  |                                      | brisa.identity.test  (web, app clients)
+  +-- protected cases API --> private JSONL business-case ledger
+WSO2 identity persistence: PostgreSQL identity/shared/agent databases
+```
+
+| Browser channel | OIDC client key | Tenant | Registered callback path | What it is |
+|---|---|---|---|---|
+| Aurora Web | `aurora-web` | `aurora.identity.test` | `/auth/aurora-web/callback` | BFF confidential browser client |
+| Aurora Mobile | `aurora-app` | `aurora.identity.test` | `/auth/aurora-app/callback` | Mobile-styled **browser**, not native SDK |
+| Brisa Web | `brisa-web` | `brisa.identity.test` | `/auth/brisa-web/callback` | BFF confidential browser client |
+| Brisa Mobile | `brisa-app` | `brisa.identity.test` | `/auth/brisa-app/callback` | Mobile-styled **browser**, not native SDK |
+
+The server's Carbon Super `admin` is **not** a consumer persona or a brand OIDC app.
+Tenants, local tenant owners, WSO2 API audiences and SCIM application-scoped roles are
+separate authorities. Profile API audience: `https://api.ciam-v10.test/profile`;
+Cases API audience: `urn:ciampoc:service-requests:v1`. The BFF rejects wrong tenant,
+audience, client and scopes. Do not infer permissions from a visible role label.
+
+| WSO2 business scopes | Legitimate proof | Guardrail |
+|---|---|---|
+| `ciam:profile:read` | protected UserInfo HTTP result | Only issuer-released attributes, no guessed names |
+| `ciam:cases:create`, `ciam:cases:read` | customer create + OWNER_ONLY list | Creation changes the real private ledger |
+| `ciam:cases:review` | seller BRAND_REVIEW | No automatic cross-tenant visibility |
+| `ciam:cases:approve` | real approval HTTP + TOTP step-up | Scope **alone never proves MFA**; self-approval denied |
+
+### Presenter walkthrough (show business meaning, then expand technical evidence)
+
+| Step / expected screen | Persona and operator action | Actual evidence to display | Business message / limitations |
+|---|---|---|---|
+| 1. `/lab` home | Open guided journey list | Open **Evidência ao vivo**; read `/api/wso2-status` | Two tenant realms, four independent browser clients |
+| 2. Aurora Web | Ana signs in using WSO2-hosted login | `/api/identity/me` issuer and scopes, `/api/brands/aurora/profile?client=aurora-web` HTTP 200 | Trust comes from WSO2, not a local persona switch |
+| 3. Aurora Mobile | Ana signs in to separate app client | Verify `aurora-app` active with correct issuer/scopes | Distinct application, same brand; mobile is browser-only |
+| 4. Brisa Web and Mobile | Ana signs in with separate **Brisa** credentials | Verify each Brisa client and opposite-brand API returns 403 | Tenant isolation without reusing Aurora token |
+| 5. Real business request | Ana creates via Aurora UI **only with explicit rehearsal approval** | New UUID, HTTP 201 then list OWNER_ONLY readback | A business change is persisted, not a catalog fixture |
+| 6. Seller review | Separate browser as Marcos; review Aurora record | `BRAND_REVIEW`; inappropriate create HTTP 403 | Role scopes and customer ownership guard the API |
+| 7. MFA boundary | Seller attempts only an operator-approved test | Actual backend approval denial or verified TOTP + persisted approval | Never promise successful step-up until verified |
+| 8. Privacy / delegation / roadmap | Open other guided stories | Live UserInfo only; unsupported controls labeled pending | Explain honest GA limitations instead of fictional consent |
+
+The *business problem → persona → journey → capability → evidence → outcome* sequence is
+also embedded in each guided journey. The expandable evidence dialog displays only
+sanitized issuer, subject fingerprint, granted scopes, token-declared ACR/AMR, HTTP
+responses, record counts and tenant-isolation denials. It **does not** show raw tokens,
+CSRF, passwords, cookies, arbitrary private claims or fake consent/MFA status.
+
+### Credential retrieval, acceptance and recovery
+
+Use the original private journal and macOS clipboard workflow **without printing a password**:
+
+```bash
+python3 scripts/ciam-identity-ops.py password --kind person --tenant aurora --user ana.costa
+python3 scripts/ciam-identity-ops.py password --kind person --tenant aurora --user marcos.oliveira
+python3 scripts/ciam-identity-ops.py password --kind person --tenant brisa --user ana.costa
+printf '' | pbcopy                         # after each actual login
+```
+
+See the full authoritative [identity inventory](#ciam-doc-docs-ciam-v5-tenant-inventory-md),
+[original browser/business security test steps](#ciam-doc-docs-ciam-v5-e2e-testing-md),
+[deployment topology](#ciam-doc-docs-ciam-v5-architecture-and-ownership-md),
+[provisioning and recovery](#ciam-doc-readme-implementation-md), and
+[dated acceptance evidence](#ciam-doc-docs-ciam-v10-acceptance-2026-10-28-md) below.
+Read-only management verification uses `python3 scripts/ciam-v5-four-client-readback.py`,
+`python3 deploy/ciam-v10/phase4/business-bootstrap.py verify`, and
+`python3 scripts/ciam-carbon-super-readback.py`. A command returning 0 is **not** itself
+proof all roles/audiences are correct: inspect individual readback fields. Browser audits
+run 320/375/768/1280/1600 px in Playwright when installed. A full WCAG audit additionally
+needs axe-core, screen reader, keyboard, zoom, contrast and human task testing.
+
+**Troubleshooting:** no `/api/health` → BFF not serving; SHA/hash mismatch → restart the
+existing BFF after compiling/committing assets; discovery failure → verify tenant issuer,
+WSO2 TLS readiness, and local certificate trust (never disable TLS verification);
+401 → inspect client/issuer/audience/introspection; 403 → inspect actual WSO2 scopes
+and permitted owner/reviewer role; `fresh_wso2_totp_required` → blocked positive MFA
+until genuine WSO2 factor/policy is demonstrated; absent private journal → recover via
+approved operator procedure, do not generate synthetic credentials.
+
+**Compatibility:** WSO2 IS 7.3 GA capabilities depend on installed update level and
+configured authenticators. The code's guards are not evidence that a deployment
+supports consent v2, delegated organizations, actor token exchange or positive TOTP.
+The roadmap prioritizes real successful step-up, role/attribute claim release,
+consent lifecycle, delegated B2B, agent exchange, native mobile SDK, transactional
+case storage, and a full assisted-technology accessibility acceptance.
+<!-- CIAM_P120_P123_CURRENT_END -->
+
+
 <!-- CIAM_SINGLE_README_V1_START -->
 
 > **Single documentation source.** This `README.md` contains the current architecture,
