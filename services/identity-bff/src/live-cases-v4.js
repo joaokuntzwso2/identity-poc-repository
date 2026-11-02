@@ -4,6 +4,8 @@ import { mkdirSync, openSync, readFileSync, writeSync, fsyncSync, closeSync } fr
 import { resolve, isAbsolute } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { precheckApproval } from './case-approval-p010.js';
+import {createBusinessCase,listBusinessCases,precheckBusinessApproval,BusinessError} from './business-db.js';
+import {existsSync} from 'node:fs';
 
 const SCOPES = Object.freeze({
   create: 'ciam:cases:create', read: 'ciam:cases:read',
@@ -19,7 +21,15 @@ function datastore() {
   return root;
 }
 function fileFor(brand) { return resolve(datastore(), `requests-${brand}.jsonl`); }
+function checkLegacyWriteMode(){
+  if (process.env.CIAM_CASES_BACKEND === 'postgres')
+    throw new Error('LEGACY_LEDGER_DISABLED_AFTER_CUTOVER');
+  const dir=process.env.CIAM_BUSINESS_DATA_DIR;
+  if(dir && isAbsolute(dir) && existsSync(resolve(dir,'business-postgres-cutover.json')))
+    throw new Error('LEGACY_LEDGER_CUTOVER_ALREADY_ACTIVATED');
+}
 function events(brand) {
+  checkLegacyWriteMode();
   let text;
   try { text = readFileSync(fileFor(brand), 'utf8'); }
   catch (error) { if (error.code === 'ENOENT') return []; throw error; }
@@ -30,6 +40,7 @@ function events(brand) {
   return entries;
 }
 function persist(brand, event) {
+  checkLegacyWriteMode();
   const line = JSON.stringify({ ...event, brand }) + '\n';
   const fd = openSync(fileFor(brand), 'a', 0o600);
   try { writeSync(fd, line); fsyncSync(fd); }
@@ -94,7 +105,9 @@ export async function handleCases(req, res, u, s, {clients, authorize, sameOrigi
   }
   try {
     if (caseId) {
-      precheckApproval({brand,caseId,issuer:login.claims.iss,subject:login.claims.sub});
+      if (process.env.CIAM_CASES_BACKEND === 'postgres')
+        await precheckBusinessApproval({brand,caseId,issuer:login.claims.iss,subject:login.claims.sub});
+      else precheckApproval({brand,caseId,issuer:login.claims.iss,subject:login.claims.sub});
       const launch = await beginApproval({session:s,key,brand,caseId});
       send(res,202,{status:'WSO2_TOTP_STEP_UP_REQUIRED',...launch});return true;
     }
@@ -103,6 +116,12 @@ export async function handleCases(req, res, u, s, {clients, authorize, sameOrigi
       if (!input || typeof input.title !== 'string' || typeof input.description !== 'string' ||
           input.title.trim().length < 3 || input.title.length > 120 || input.description.length > 1000) {
         send(res,400,{error:'invalid_case_fields'});return true;
+      }
+      if (process.env.CIAM_CASES_BACKEND === 'postgres') {
+        const created=await createBusinessCase({brand,issuer:login.claims.iss,subject:login.claims.sub,
+          title:input.title,description:input.description,
+          idempotencyKey:req.headers['idempotency-key']});
+        send(res,created.replayed?200:201,created);return true;
       }
       const id=randomUUID();
       persist(brand,{id,action:'created',actor:who,title:input.title.trim(),
@@ -113,12 +132,25 @@ export async function handleCases(req, res, u, s, {clients, authorize, sameOrigi
     const review = await authorize(s,key,SCOPES.review);
     const all = review.http === 200;
     if (!all && review.http !== 403) {send(res,review.http,{error:review.reason});return true;}
-    const out = [...materialize(brand).values()]
-      .filter(x => all || x.owner === who)
-      .map(({owner,approvedBy,...record}) => record); // don't disclose identity hashes
+    const out = process.env.CIAM_CASES_BACKEND === 'postgres'
+      ? await listBusinessCases({brand,issuer:login.claims.iss,subject:login.claims.sub,review:all})
+      : [...materialize(brand).values()]
+        .filter(x => all || x.owner === who)
+        .map(({owner,approvedBy,...record}) => record); // don't disclose identity hashes
     send(res,200,{brand,records:out,visibility:all?'BRAND_REVIEW':'OWNER_ONLY',persistent:true});
     return true;
   } catch (error) {
+    // P1.17: database errors are handled before the legacy JSONL error path.
+    // Do not expose SQL/driver messages to a browser or log access credentials.
+    if (process.env.CIAM_CASES_BACKEND === 'postgres') {
+      const code = error instanceof BusinessError
+        ? error.code : 'persistent_business_service_unavailable';
+      const status = error instanceof BusinessError ? error.status : 503;
+      console.error(JSON.stringify({event:'LIVE_CASES_FAILED',code}));
+      send(res,status,{error:code});
+      return true;
+    }
+
     console.error(JSON.stringify({event:'LIVE_CASES_FAILED',message:error.message}));
     send(res,error.status || 503,{error:error.code || 'persistent_business_service_unavailable'}); return true;
   }

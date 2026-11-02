@@ -325,3 +325,5 @@ __pycache__/
 .DS_Store
 # CIAM_V10_PRIVATE_RUNTIME_2026_10_28_END
 /var/ciam-business-data/
+
+!scripts/wso2/p119-hosted-paths-audit.mjs

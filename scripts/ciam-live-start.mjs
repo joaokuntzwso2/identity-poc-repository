@@ -161,6 +161,21 @@ async function main() {
   if (args.length && (args.length !== 1 || args[0] !== '--check')) throw Error('USAGE: npm run start:bff OR npm run ciam:preflight');
   const check = args.includes('--check');
   const env = getRuntimeEnv();
+  // P119_HOSTED_NAVIGATION_BEGIN
+  const p119HostedNavigation = Object.freeze({
+    "WSO2_AURORA_REGISTRATION_URL": "https://localhost:9444/t/aurora.identity.test/accountrecoveryendpoint/register.do",
+    "WSO2_AURORA_PASSWORD_CHANGE_URL": "https://localhost:9444/t/aurora.identity.test/myaccount",
+    "WSO2_AURORA_PASSWORD_RECOVERY_URL": "https://localhost:9444/t/aurora.identity.test/accountrecoveryendpoint/recoveraccountrouter.do",
+    "WSO2_BRISA_REGISTRATION_URL": "https://localhost:9444/t/brisa.identity.test/accountrecoveryendpoint/register.do",
+    "WSO2_BRISA_PASSWORD_CHANGE_URL": "https://localhost:9444/t/brisa.identity.test/myaccount",
+    "WSO2_BRISA_PASSWORD_RECOVERY_URL": "https://localhost:9444/t/brisa.identity.test/accountrecoveryendpoint/recoveraccountrouter.do"
+});
+  for (const [name, url] of Object.entries(p119HostedNavigation)) {
+    if (env[name] && env[name] !== url)
+      throw Error('P119_HOSTED_NAVIGATION_ENV_CONFLICT');
+    env[name] = url;
+  }
+  // P119_HOSTED_NAVIGATION_END
   requireSourceSignatures();
   safeClientSummary();
   checkCertificate();
@@ -171,6 +186,13 @@ async function main() {
   if (!env.WSO2_BUSINESS_API_AUDIENCE)
     console.warn('NOTE: WSO2_BUSINESS_API_AUDIENCE is not set; protected profile API requires its separately verified audience.');
   if (check) { console.log('Preflight PASS. No server started. No WSO2 changes.'); return; }
+  // P119_GOVERNANCE_STARTUP_BRIDGE
+  const { spawnSync } = await import('node:child_process');
+  const governance = spawnSync('python3', [join(ROOT, 'scripts/wso2/p119-governance-startup.py'), 'startup'], {
+    cwd: ROOT, env, stdio: 'inherit', timeout: 120000
+  });
+  if (governance.error || governance.status !== 0)
+    throw Error('P119_GOVERNANCE_STARTUP_RECONCILE_FAILED');
   const child = spawn(process.execPath, [join(ROOT, 'services/identity-bff/src/server.js')], {
     cwd: ROOT, env, stdio: 'inherit'
   });

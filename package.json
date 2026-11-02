@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @poc/experience-center",
+    "prestart:bff": "node scripts/prepare-business-ledgers.mjs",
     "start:bff": "node scripts/ciam-live-start.mjs",
     "ciam:preflight": "node scripts/ciam-live-start.mjs --check",
     "ciam:smoke": "node scripts/ciam-live-smoke.mjs",
@@ -21,7 +22,12 @@
     "identity:audit": "node scripts/identity/release-gates.mjs",
     "identity:phase1": "node scripts/identity/phase1-preflight.mjs",
     "identity:exchange": "node scripts/identity/token-exchange-live.mjs",
-    "identity:db:migrate": "node scripts/identity/db-migrate.mjs"
+    "identity:db:migrate": "node scripts/identity/db-migrate.mjs",
+    "ciam:p119:email": "python3 scripts/wso2/p119-governance-startup.py email",
+    "ciam:p119:plan": "python3 scripts/wso2/p119-governance-startup.py plan",
+    "ciam:p119:apply": "python3 scripts/wso2/p119-governance-startup.py apply",
+    "ciam:p119:check": "python3 scripts/wso2/p119-governance-startup.py check",
+    "ciam:p119:rollback": "python3 scripts/wso2/p119-governance-startup.py rollback"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -1,0 +1,21 @@
+# ADDITIVE only: combine with existing docker-compose.yml. No existing service altered.
+# docker compose -f docker-compose.yml -f deploy/business-postgres.compose.yml up -d business-postgres
+services:
+  business-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ciam_business
+      POSTGRES_USER: ciam_business_owner
+      POSTGRES_PASSWORD: ${CIAM_BUSINESS_OWNER_PASSWORD:?set a strong private business database owner password}
+    volumes:
+      - ciam-business-postgres:/var/lib/postgresql/data
+    ports: ["127.0.0.1:${CIAM_BUSINESS_DB_PORT:-55432}:5432"] # local operator CLI only
+    networks: [demo-private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ciam_business_owner -d ciam_business"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+volumes:
+  ciam-business-postgres:
