@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { demoProvenance } from './demo-provenance-p123.js';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -162,7 +163,7 @@ async function api(req, res, u, s) {
       try { await businessHealth(); }
       catch { return reply(res,503,{service:'WSO2-live-identity-bff',status:'BUSINESS_DB_DOWN'}); }
     }
-    return reply(res,200,{service:'WSO2-live-identity-bff',status:'UP',casesBackend});
+    return reply(res,200,{service:'WSO2-live-identity-bff',status:'UP',casesBackend, provenance: demoProvenance});
   }
   if (u.pathname === '/api/wso2-status' && req.method === 'GET') {
     const statuses = await Promise.all(Object.entries(clients).map(async ([key, c]) => {
@@ -290,6 +291,8 @@ const STATIC = Object.freeze({
   '/portal/brisa/web': 'live-experience-v5.html',
   '/portal/brisa/mobile': 'live-experience-v5.html',
   '/live-experience-v5.js': 'live-experience-v5.js',
+  '/live-premium-p120.js': 'live-premium-p120.js',
+  '/live-premium-p120.css': 'live-premium-p120.css',
   '/live-experience-v5.css': 'live-experience-v5.css',
   '/live-retail-v5.css': 'live-retail-v5.css',
   '/live-workspace-p113.css': 'live-workspace-p113.css',
