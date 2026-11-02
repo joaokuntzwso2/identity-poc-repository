@@ -13,6 +13,10 @@ import { liveApiDenial } from './live-api-policy.js';
 import { readVerifiedUserinfo } from './live-userinfo.js';
 import { readOidcUserinfoForClient } from './oidc-userinfo-p010.js';
 import { handleCases } from './live-cases-v4.js';
+import { handleSelfService } from './wso2-self-service-p119.js';
+import { approveBusinessCase,businessHealth,assertPostgresCutover } from './business-db.js';
+import { rpLogoutUrl } from './rp-logout-p118.js';
+import { existsSync } from 'node:fs';
 import { beginApprovalChallenge, verifyApprovalResponse, totpPolicy } from './approval-stepup-p010.js';
 import { commitApprovedCase } from './case-approval-p010.js';
 
@@ -20,9 +24,17 @@ import { commitApprovedCase } from './case-approval-p010.js';
 if (process.env.IDENTITY_MODE !== 'live-wso2')
   throw new Error('LIVE_WSO2_REQUIRED_NO_SYNTHETIC_MODE');
 const sessionStore = new DemoSessionStore({
-  maxSessions: appConfig.maxSessions, secure: appConfig.origin.startsWith('https:')
+  maxSessions: appConfig.maxSessions, secure: appConfig.origin.startsWith('https:'),
+  idleMs:Number(process.env.SESSION_IDLE_MS || 3600000),
+  absoluteMs:Number(process.env.SESSION_ABSOLUTE_MS || 28800000)
 });
 const origin = new URL(appConfig.origin);
+const casesBackend=process.env.CIAM_CASES_BACKEND || 'jsonl';
+if (!['jsonl','postgres'].includes(casesBackend)) throw new Error('UNSUPPORTED_CASES_BACKEND');
+if (casesBackend==='postgres') assertPostgresCutover();
+else if (process.env.CIAM_BUSINESS_DATA_DIR &&
+    existsSync(join(process.env.CIAM_BUSINESS_DATA_DIR,'business-postgres-cutover.json')))
+  throw new Error('JSONL_REACTIVATION_FORBIDDEN_AFTER_CUTOVER');
 if (!['https:', 'http:'].includes(origin.protocol)) throw new Error('INVALID_PUBLIC_ORIGIN');
 if (origin.protocol === 'http:' &&
     (!appConfig.allowInsecureLocal || !['localhost', '127.0.0.1'].includes(origin.hostname)))
@@ -111,7 +123,25 @@ async function protectedDecision(s, key) {
   return requireAuthorityForClient(s, key, clients,
     'ciam:profile:read', process.env.WSO2_BUSINESS_API_AUDIENCE);
 }
+async function rpLogoutCsrf(req,session){
+  if(req.headers.origin!==appConfig.origin)return false;
+  let token=req.headers['x-csrf-token'];
+  if(!token && (req.headers['content-type']||'').startsWith('application/x-www-form-urlencoded')){
+    let raw='';
+    for await(const chunk of req){raw+=chunk.toString('utf8');
+      if(Buffer.byteLength(raw)>1024)return false;}
+    const params=new URLSearchParams(raw);
+    if(params.getAll('csrf').length!==1 || [...params.keys()].some(k=>k!=='csrf'))return false;
+    token=params.get('csrf');
+  }
+  return typeof token==='string' && token.length>0 && safeEqual(token,session.csrf);
+}
 async function api(req, res, u, s) {
+  if (await handleSelfService(req,res,u,s,{
+    clients,sameOrigin:r=>r.headers.origin===appConfig.origin,
+    safeCsrf:(r,session)=>Boolean(r.headers['x-csrf-token']) &&
+      safeEqual(r.headers['x-csrf-token'],session.csrf)
+  })) return;
   // CIAM_V4_REAL_CASES_ROUTER: WSO2 scope checks precede persistent business operations.
   if (await handleCases(req, res, u, s, {
     clients,
@@ -127,8 +157,13 @@ async function api(req, res, u, s) {
       return beginApprovalChallenge({session,key,brand,caseId,client:c,discovery:doc,policy});
     }
   })) return;
-  if (u.pathname === '/api/health' && req.method === 'GET')
-    return reply(res, 200, { service: 'WSO2-live-identity-bff', status: 'UP' });
+  if (u.pathname === '/api/health' && req.method === 'GET') {
+    if (casesBackend === 'postgres') {
+      try { await businessHealth(); }
+      catch { return reply(res,503,{service:'WSO2-live-identity-bff',status:'BUSINESS_DB_DOWN'}); }
+    }
+    return reply(res,200,{service:'WSO2-live-identity-bff',status:'UP',casesBackend});
+  }
   if (u.pathname === '/api/wso2-status' && req.method === 'GET') {
     const statuses = await Promise.all(Object.entries(clients).map(async ([key, c]) => {
       try { const md = await discover(c.issuer); return { key, discovery: md.issuer === c.issuer }; }
@@ -193,6 +228,22 @@ async function api(req, res, u, s) {
       console.error(JSON.stringify({ event: 'USERINFO_CHECK_FAILED', code: e.message }));
       return reply(res, 502, { error: 'wso2_userinfo_not_verified', allowed: false });
     }
+  }
+  if (u.pathname === '/api/logout/idp') {
+    if(process.env.WSO2_RP_LOGOUT_ENABLED!=='1')
+      return reply(res,503,{error:'wso2_rp_logout_not_enabled'});
+    if(req.method!=='POST')return reply(res,405,{error:'method_not_allowed'});
+    if(!(await rpLogoutCsrf(req,s)))
+      return reply(res,403,{error:'csrf_or_origin_denied'});
+    const key=u.searchParams.get('client');
+    if(!key || !Object.hasOwn(clients,key))return reply(res,400,{error:'invalid_client'});
+    try {
+      const logoutUrl=await rpLogoutUrl({client:clients[key],login:s.logins[key],
+        postLogoutUri:process.env[`OIDC_${key.toUpperCase().replace(/-/g,'_')}_POST_LOGOUT_URI`],
+        origin:appConfig.origin});
+      sessionStore.destroy(s,res);
+      return redirect(res,logoutUrl);
+    }catch{return reply(res,503,{error:'wso2_rp_logout_not_available',localSessionPreserved:true});}
   }
   if (u.pathname === '/api/logout') {
     if (req.method !== 'POST') return reply(res, 405, { error: 'method_not_allowed' });
@@ -273,7 +324,8 @@ function destination(key, asked) {
 }
 async function handle(req, res) {
   const u = new URL(req.url, appConfig.origin);
-  if (u.pathname.startsWith('/api/') && !/^\/api\/brands\/(aurora|brisa)\/profile$/.test(u.pathname) && !/^\/api\/brands\/(aurora|brisa)\/cases(?:\/[0-9a-f-]{36}\/approve)?$/.test(u.pathname)) {
+  if (u.pathname.startsWith('/api/') && !/^\/api\/brands\/(aurora|brisa)\/profile$/.test(u.pathname) &&
+      !/^\/api\/brands\/(aurora|brisa)\/self-service\/(me|navigation)$/.test(u.pathname) && !/^\/api\/brands\/(aurora|brisa)\/cases(?:\/[0-9a-f-]{36}\/approve)?$/.test(u.pathname)) {
     const denial = liveApiDenial(u.pathname, req.method);
     if (denial) return reply(res, denial.status, denial.body);
   }
@@ -301,8 +353,11 @@ async function handle(req, res) {
         returnTo: destination(key, u.searchParams.get('returnTo')) };
       return redirect(res, makeAuthorizationUrl(doc, {
         clientId: c.clientId, redirectUri: callbackUrl(key), state, nonce, verifier,
-        scope: process.env.WSO2_CASES_SCOPES_ENABLED === '1' && process.env.WSO2_CASES_API_AUDIENCE ? 
-          `${c.scope} ciam:cases:create ciam:cases:read ciam:cases:review ciam:cases:approve` : c.scope
+        scope: [...new Set(
+          (process.env.WSO2_CASES_SCOPES_ENABLED === '1' && process.env.WSO2_CASES_API_AUDIENCE
+            ? `${c.scope} ciam:cases:create ciam:cases:read ciam:cases:review ciam:cases:approve`
+            : c.scope).split(/\s+/).filter(Boolean).concat('internal_login')
+        )].join(' ')
       }));
     }
     const cb = /^\/auth\/(aurora|brisa)-(web|mobile|app)\/callback$/.exec(u.pathname);
@@ -338,7 +393,7 @@ async function handle(req, res) {
         // Never approve from old ID-token MFA claims, acr_values request or UI state.
         try {
           const proof = verifyApprovalResponse({session:s,pending,key,client:c,claims,policy:totpPolicy()});
-          const candidate = { verified:true, claims, accessToken:tokens.access_token };
+          const candidate = { verified:true, claims, accessToken:tokens.access_token, idToken: tokens.id_token };
           const decision = await requireAuthorityForClient(
             {logins:{[key]:candidate}},key,clients,'ciam:cases:approve',
             process.env.WSO2_CASES_API_AUDIENCE);
@@ -347,8 +402,19 @@ async function handle(req, res) {
           // UserInfo sub binding is mandatory even for the step-up callback.
           await readVerifiedUserinfo({discovery:doc,issuer:c.issuer,
             accessToken:tokens.access_token,subject:claims.sub});
-          commitApprovedCase({brand:proof.brand,caseId:proof.caseId,
-            issuer:proof.issuer,subject:proof.subject,authTime:proof.authTime});
+          if (casesBackend === 'postgres') {
+            await approveBusinessCase({
+              brand:proof.brand, caseId:proof.caseId,
+              issuer:proof.issuer, subject:proof.subject,
+              authTime:proof.authTime, idempotencyKey:state
+            });
+          } else {
+            commitApprovedCase({
+              brand:proof.brand, caseId:proof.caseId,
+              issuer:proof.issuer, subject:proof.subject,
+              authTime:proof.authTime
+            });
+          }
           s.logins[key] = {...candidate,verifiedAt:new Date().toISOString()};
           sessionStore.rotate(s,res);
           return redirect(res,`${proof.returnTo}?client=${encodeURIComponent(key)}&approval=check&caseId=${encodeURIComponent(proof.caseId)}`);
@@ -358,7 +424,7 @@ async function handle(req, res) {
         }
       }
       s.logins[key] = { claims, verified: true, accessToken: tokens.access_token,
-        verifiedAt: new Date().toISOString() };
+        verifiedAt: new Date().toISOString(), idToken: tokens.id_token };
       sessionStore.rotate(s, res);
       return redirect(res, `${pending.returnTo || '/'}?client=${encodeURIComponent(key)}&authenticated=1`);
     }

@@ -29,11 +29,12 @@ test('live BFF enforces default-deny before dispatch and never starts preview mo
   assert.match(src, /verifyIdToken\(tokens\.id_token,/);
   assert.match(src, /live-wso2\.html/);
 });
-test('only six known endpoint/method pairs can enter existing live handlers', () => {
-  assert.deepEqual([...LIVE_API_ALLOWLIST].sort(), ['/api/health','/api/wso2-status','/api/identity/me','/api/protected/profile','/api/oidc/userinfo','/api/logout'].sort());
+test('only seven known endpoint/method pairs can enter existing live handlers', () => {
+  assert.deepEqual([...LIVE_API_ALLOWLIST].sort(), ['/api/health','/api/wso2-status','/api/identity/me','/api/protected/profile','/api/oidc/userinfo','/api/logout','/api/logout/idp'].sort());
   for (const [path, method] of [
     ['/api/health','GET'], ['/api/wso2-status','GET'], ['/api/identity/me','GET'],
-    ['/api/protected/profile','GET'], ['/api/oidc/userinfo','GET'], ['/api/logout','POST']
+    ['/api/protected/profile','GET'], ['/api/oidc/userinfo','GET'], ['/api/logout','POST'],
+    ['/api/logout/idp','POST']
   ]) assert.equal(liveApiDenial(path, method), null);
 });
 
@@ -55,8 +56,14 @@ test('live policy disables synthetic identity, operator, consent, retail, scenar
 
 test('unsupported methods fail closed on allowed live paths', () => {
   for (const path of LIVE_API_ALLOWLIST) {
-    const wrong = path === '/api/logout' ? 'GET' : 'POST';
-    assert.equal(liveApiDenial(path, wrong)?.status, 405);
+    const wrong = path === '/api/logout' || path === '/api/logout/idp' ? 'GET' : 'POST';
+    assert.equal(liveApiDenial(path, wrong)?.status, 405, `${wrong} ${path}`);
+  }
+  // RP logout is POST-only; every other method must fail closed.
+  for (const method of ['GET', 'PUT', 'PATCH', 'DELETE']) {
+    const denied = liveApiDenial('/api/logout/idp', method);
+    assert.equal(denied?.status, 405, `${method} /api/logout/idp`);
+    assert.equal(denied?.body?.allowed, false);
   }
 });
 

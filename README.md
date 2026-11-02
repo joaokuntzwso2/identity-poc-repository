@@ -3161,3 +3161,134 @@ npm run build
 
 The startup script is intentionally used only for the **local development demonstration**; production deployment must use HTTPS, deployment-managed secrets and durable storage. If the old React preview build is missing its historical `personas.json`, the installer restores that fixture from Git commit `6d37d3a` without enabling preview identity in the live BFF. The restored preview fixture must be reviewed and committed to keep subsequent builds reproducible. Existing uncommitted changes and private journals are not touched by this bootstrap patch. Do not commit `var/wso2/` files, the certificate, or the business ledgers. Keep the successful customer→seller→WSO2 TOTP→persisted approval as a separate manual real-session acceptance test; the smoke test does not prove it.
 <!-- /P1.13-16_DURABLE_V10_STARTUP -->
+
+## P1.17–P1.19 guarded PostgreSQL cutover and WSO2 customer self-service
+
+> **Deployment status:** The code is additive and defaults to the existing JSONL backend. No database migration, WSO2 account modification, tenant change, recovery request or IdP logout runs automatically. Live approval and self-service require an already configured WSO2 7.3 environment and operator validation. This section is the single root README operational runbook.
+
+### Business boundary and schema
+
+Application-owned `ciam_business` PostgreSQL database, **never** WSO2's identity stores (`ciam_identity` etc). `db/business/001_init.sql` creates `business.brands` (explicit issuer binding), `service_requests` (UUID, brand FK, actor fingerprint, optional full authenticated issuer/sub for new records, bounded title/description and status), ordered `case_events` (one created event and at most one approval event, serving as immutable status-transition audit history and preserving original JSONL line position), `seller_decisions` (unique seller approval per case, historical actor fingerprint or authenticated seller identity), `operation_idempotency`, `jsonl_imports`, migration checksums and status-transition trigger. A composite `(brand,id)` FK prevents cross-brand event associations. Database statements use parameters, transactions and a bounded `pg` pool. Runtime role only receives SELECT/INSERT/UPDATE as required and never owns DDL. No client-controlled subject/tenant/role fields are accepted by the business API.
+
+All actions authorize the selected OIDC client *and* independently introspect its WSO2 access token, audience and scope. Owner keys preserve `sha256(JSON.stringify([issuer,sub]))` exactly; historical JSONL actor digests cannot be inverted. Requests are filtered by brand and actor; reviewer visibility still requires WSO2 `ciam:cases:review`. Approval continues to require the existing approval-bound, fresh WSO2 TOTP response, verifies issuer/subject, and then commits the transition using a locked row and `UPDATE ... WHERE status='OPEN'`. Only the first concurrent approval succeeds. An optional `Idempotency-Key` header (8–128 printable ASCII bytes) permits safe creation retries; keys are scoped by brand, actor and operation, and payload hash mismatches return 409. Existing browsers without the header remain compatible but cannot deduplicate a fresh independently submitted create operation.
+
+### Dedicated database, privileges and local Docker
+
+Do not attach the BFF to WSO2's schema/database. Existing identity Docker compose services and volumes stay untouched. Create an isolated database via the additive compose overlay:
+
+```bash
+export CIAM_BUSINESS_OWNER_PASSWORD='<privately-generated-value>'
+docker compose -f docker-compose.yml -f deploy/business-postgres.compose.yml up -d business-postgres
+```
+
+The local overlay binds PostgreSQL to loopback port `55432` for the operator's host-side migration tools; production should omit that port and use an approved private administration path. The BFF container uses `business-postgres:5432`, whereas a CLI run on macOS uses `127.0.0.1:55432`. Keep migration owner and runtime credentials separate. Run `db/business/provision-roles.sql` **manually**, reviewed by the operator, through `psql` on the new database; supply the new runtime password by secure interactive mechanism rather than in shell history. For production, use private TLS with CA validation, managed secrets, network isolation, restricted backups and PostgreSQL least-privilege roles. The migrator requires DDL privileges and is not the runtime principal.
+
+Private BFF environment (never commit actual values):
+
+```dotenv
+CIAM_CASES_BACKEND=jsonl
+CIAM_BUSINESS_DATA_DIR=/absolute/private/existing/case-ledgers
+CIAM_BUSINESS_DATABASE_URL=postgresql://ciam_business_runtime:<secret>@business-postgres:5432/ciam_business
+CIAM_BUSINESS_MIGRATOR_DATABASE_URL=postgresql://ciam_business_owner:<secret>@business-postgres:5432/ciam_business
+CIAM_AURORA_ISSUER=https://<actual-tenant-a-issuer>/oauth2/token
+CIAM_BRISA_ISSUER=https://<actual-tenant-b-issuer>/oauth2/token
+CIAM_BUSINESS_PG_CA_FILE=/absolute/path/to/business-db-ca.pem
+SESSION_IDLE_MS=3600000
+SESSION_ABSOLUTE_MS=28800000
+WSO2_SELF_SERVICE_WRITES_ENABLED=0
+WSO2_RP_LOGOUT_ENABLED=0
+```
+
+`CIAM_AURORA_ISSUER` and `CIAM_BRISA_ISSUER` must exactly match the **deployed** tenant OIDC issuer values. Use explicit `NODE_ENV=production`, HTTPS-only public origin/cookie and trusted database CA in production. Never use SSL `rejectUnauthorized:false`. Local HTTP is allowed only with `ALLOW_INSECURE_LOCAL=true` and loopback public origin. The default backend stays JSONL until the guarded cutover.
+
+### Non-destructive JSONL migration / rollback runbook
+
+1. Snapshot the entire original private `CIAM_BUSINESS_DATA_DIR` to an encrypted, access-controlled backup. Preserve `requests-aurora.jsonl`, `requests-brisa.jsonl` byte-for-byte, file modes and ownership. Plan a maintenance window, stop all case-writing BFF instances and take a **consistent** snapshot. `inventory` fails if either file is missing, malformed, truncated, over 10 MiB or has invalid event ordering, IDs, duplicate approvals, owner self-approval, invalid timestamps or fields. Resolve anomalies with an operator-approved procedure; never silently skip rows.
+2. On the BFF project root, run `node scripts/business-db.mjs schema-hash` and `node scripts/business-db.mjs inventory`. Record the displayed schema checksum, case/event/approved counts, file SHA-256s and combined fingerprint externally. Inventory does not mutate the database or ledgers.
+3. With write access explicitly authorized, run `CIAM_OPERATOR_APPROVED_WRITES=YES node scripts/business-db.mjs migrate-schema --approve=<schemaSha256>`; provision the runtime role. Review the migration before proceeding. This step only touches the dedicated business database.
+4. **Keep all BFF writers stopped.** Run `CIAM_OPERATOR_APPROVED_WRITES=YES node scripts/business-db.mjs apply-ledger --approve=<inventoryFingerprint>`. Import is all-or-nothing across **both** brands in one transaction with an advisory lock. It aborts if destination has cases, an import marker or a mismatched issuer; interrupted transactions roll back. Import records retain original UUIDs, hashed actors, timestamps, event sequence and final status. Neither ledger is modified.
+5. Run `node scripts/business-db.mjs verify` before enabling new writes. This compares every case and event field, not just counts, against original JSONL and checks the stored file digests. Store the output as migration evidence. If either source changes between steps, the inventory fingerprint changes: abort and restart from a consistent snapshot, do **not** overwrite imported records.
+6. With the BFF still stopped and operator approval, run `CIAM_OPERATOR_APPROVED_WRITES=YES node scripts/business-db.mjs activate --approve=<inventoryFingerprint>`. It re-verifies and creates `business-postgres-cutover.json` with `O_EXCL`, mode `0600` in the private ledger folder; it does not alter the JSONL files. Set `CIAM_CASES_BACKEND=postgres`, restart the BFF and verify `/api/health`, case read/create and the WSO2 approval journey. If backend is `jsonl` when the marker exists, the BFF refuses to start rather than silently diverging.
+7. **Rollback:** before activation, stop the candidate BFF and leave the JSONL baseline running; remove only an operator-approved *new*, independent business database after backups. After activation and **especially after any PostgreSQL write**, never revert to the stale JSONL files. Restore the PostgreSQL backup/PITR to a consistent point or perform an explicit audited reverse export/merge approved by the business owner. No automatic dual-write or rollback is implemented.
+
+Backups: use `pg_dump --format=custom --no-owner --file=<encrypted-private-path>` with a dedicated backup principal, protected credentials, encryption at rest, retention and tested off-host recovery. Restore **into a clean independent database** with `pg_restore --exit-on-error --single-transaction --dbname=<isolated-restore-db>` and verify brand, case, seller-decision, event and idempotency counts and transition integrity before swapping traffic. Never run restore against WSO2's database. Test restore at least per release and ensure retention covers the migration window.
+
+### Session and logout semantics
+
+`DemoSessionStore` retains local single-process compatibility; expiration is **idle** (default 60 minutes of inactivity) and **absolute** (default 8 hours from creation), with cookie `Max-Age` bounded by whichever is sooner. It rejects ambiguous duplicate cookies and rotates both opaque ID and CSRF secret after successful OIDC authentication/approval step-up, clearing other pending OAuth transactions. Existing OAuth callback state/nonce/PKCE single-use checks remain in place. Signed ID token `exp` and active WSO2 introspection still gate protected actions. No access, ID or refresh token is put into frontend JavaScript or localStorage. Refresh tokens are deliberately **not** requested or stored by this patch; session expiration requires reauthentication. JWKS validation and its rotation remain governed by `oidc.js`. Failed introspection is a 503 fail-closed decision, not an implicit success.
+
+`POST /api/logout` remains **BFF-local** and does not assert IdP logout. Optional, operator-enabled (`WSO2_RP_LOGOUT_ENABLED=1`) `POST /api/logout/idp?client=<registered-client>` is CSRF and same-origin protected, can be initiated by a full browser form POST with a `csrf` hidden field (or with a CSRF header in an authenticated same-origin request), and requires a WSO2-advertised, trusted `end_session_endpoint` plus explicitly registered `OIDC_<CLIENT>_POST_LOGOUT_URI` on the same PUBLIC_ORIGIN. It sends the server-held verified `id_token_hint` in a standards-compatible redirect to WSO2, then destroys the local BFF session. If IdP logout is unavailable/misconfigured it returns 503 and keeps the local session; do not claim global logout succeeded until verified at WSO2. Shared durable sessions (e.g. a protected Redis implementation with encryption and TTL) are necessary before horizontal/multi-instance deployment; this patch intentionally does not silently switch the local-demo session backend.
+
+### Genuine WSO2 customer self-service
+
+`GET /api/brands/{brand}/self-service/me?client={brand}-web` reads the *authenticated user's* WSO2 `/scim2/Me`, with live access-token introspection first. `PATCH` to the same route requires `WSO2_SELF_SERVICE_WRITES_ENABLED=1` (explicit authorized deployment enablement) and accepts only `nickName`, `givenName` and `familyName` JSON keys, exact same-origin + CSRF, and sends SCIM 2.0 PATCH to WSO2 using **the user's own bearer token**. Success is returned only after a second WSO2 GET confirms the requested values. WSO2 rejection, insufficient token scope, unavailable API or mismatched post-write readback produce errors; no local profile state is invented. OIDC UserInfo remains the authoritative OIDC claim release path (`/api/oidc/userinfo` and existing brand-profile read). Email changes, tenant changes, roles and account-status modifications are deliberately **not** permitted through the BFF PATCH endpoint.
+
+`GET /api/brands/{brand}/self-service/navigation?client={brand}-web` returns configured, same-issuer-origin hosted WSO2 registration, password-change and recovery destinations (only if configured). Set `WSO2_AURORA_REGISTRATION_URL`, `WSO2_AURORA_PASSWORD_CHANGE_URL`, `WSO2_AURORA_PASSWORD_RECOVERY_URL` and corresponding `WSO2_BRISA_*` URLs to verified WSO2 My Account/sign-in journeys for **each real tenant**. Operators must enable sign-up, password recovery transport (email/SMS), account verification and My Account capabilities in WSO2. Users perform registration, password changes, recovery challenge steps and confirmation **on WSO2**, not through local password storage or a privileged SCIM/Users endpoint. Hosted flows are user-interactive; the BFF does not claim a change has occurred until a subsequent real login/UserInfo read confirms it. Self-service availability can vary by WSO2 tenant and configured grants; validate against your own 7.3 deployment.
+
+Example authenticated same-origin `PATCH`:
+
+```http
+PATCH /api/brands/aurora/self-service/me?client=aurora-web
+Origin: https://<your-public-origin>
+Content-Type: application/json
+X-CSRF-Token: <from /api/identity/me>
+
+{"givenName":"Ana","familyName":"Customer"}
+```
+
+### Acceptance and operator-only live gates
+
+Run `npm test` and `node --test services/identity-bff/test/p117-p119.test.js` for regression tests. Dedicated PostgreSQL integration tests are **opt-in** using `CIAM_TEST_DB_MUTATION_APPROVED=YES` and a dedicated disposable database configured as `CIAM_TEST_BUSINESS_DATABASE_URL`; never point test credentials at production or identity stores. Live WSO2 self-service must be tested in an operator-approved tenant/user fixture, including wrong-subject, cross-brand, expired/invalid token, CSRF, blocked unauthorized attributes, registration, profile read/write/readback and recovery email/OTP user completion. Tests must record issuer, tenant, timestamp, HTTP codes and sanitized redacted evidence, never passwords, access tokens, JWTs, recovery links or private journals.
+
+**Not automatically performed:** production migrations, WSO2 tenant/application/SCIM grants, live registration/recovery/account modification, WSO2 global logout and live approval transactions. Each needs operator authorization and a maintenance/test plan. No destructive command is run during source deployment.
+
+
+### Automatic Aurora and Brisa JSONL initialization before start:bff (P1.17)
+
+`npm run start:bff` runs `prestart:bff` automatically. This performs an
+application-owned JSONL ledger bootstrap before the BFF starts;
+`npm run ciam:preflight` remains unchanged and read-only. Both
+`requests-aurora.jsonl` and `requests-brisa.jsonl` are initialized as
+zero-byte files if absent in `CIAM_BUSINESS_DATA_DIR` (default:
+`var/ciam-business-data`). Existing files are validated, not changed.
+The directory is private (0700), files are private (0600), and the
+operation is idempotent. Malformed files, symlinks and an existing
+PostgreSQL cutover marker cause failure, not data loss.
+
+`CIAM_CASES_BACKEND=postgres` skips JSONL creation; the PostgreSQL
+schema and operational cutover are managed separately. The backend
+selection and data directory must be exported in the shell before
+`npm run start:bff` so the prestart and BFF see the same values.
+Direct execution of `node scripts/ciam-live-start.mjs` bypasses this
+npm lifecycle hook; either use npm start:bff or invoke
+`node scripts/prepare-business-ledgers.mjs` explicitly beforehand.
+This bootstrap never creates WSO2 tenants and makes no WSO2 or DB writes.
+
+Tests: `node --test services/identity-bff/test/p117*bootstrap*test.js`
+and `node --test services/identity-bff/test/p117-prestart-bff.test.js`.
+For local existing data, inspect `node scripts/business-db.mjs inventory`
+after controlled initialization.
+
+
+### Automated P1.17 historical import rehearsal (no manually entered issuer URLs)
+
+The operator invokes `python3 scripts/p117-auto-rehearsal.py` for a guarded
+preflight. This discovers the Aurora and Brisa OIDC issuer pair from the
+runtime-pinned `WSO2_BFF_PRIVATE_MANIFEST` when configured, or requires both
+private BFF manifests (`identity-bff-v10.private.json` and
+`identity-bff-wso2.private.json`) to agree, excludes linked-status reports, and
+verifies the retained `ciam_migration_rehearsal_test` database on loopback port
+55434, and inventories a private historical JSONL snapshot. It refuses missing,
+ambiguous or conflicting issuers rather than guessing. No WSO2 API is written.
+If `CIAM_BUSINESS_SNAPSHOT_DIR` is absent, the script creates a protected local
+snapshot automatically without changing original ledgers.
+
+After reviewing the output and authorizing **rehearsal database writes only**,
+run `python3 scripts/p117-auto-rehearsal.py --apply`. The script calls the existing
+`business-db.mjs apply-ledger` and `verify` under strict target, fingerprint,
+source, schema and emptiness checks. It never calls `activate`, changes the BFF
+backend, provisions WSO2 tenants, or updates original JSONL ledgers. This is not
+an unattended production migration: approval and a backed-up maintenance window
+are still required for any actual cutover. If discovery fails because the deployed
+manifest uses an unsupported format, extend the adapter after inspecting the
+private manifest structure; never substitute a guessed issuer.

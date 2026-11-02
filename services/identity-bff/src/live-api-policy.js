@@ -10,6 +10,7 @@ const EXPLICIT_LIVE_API_METHODS = Object.freeze({
   '/api/protected/profile': 'GET',
   '/api/oidc/userinfo': 'GET',
   '/api/logout': 'POST',
+  '/api/logout/idp': 'POST',
 });
 
 export const LIVE_API_ALLOWLIST = Object.freeze(Object.keys(EXPLICIT_LIVE_API_METHODS));
