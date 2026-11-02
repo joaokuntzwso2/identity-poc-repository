@@ -8,6 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { createInterface } from 'node:readline/promises';
 const run = promisify(execFile);
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const args=new Set(process.argv.slice(2));
@@ -129,7 +130,9 @@ if(!browserOff&&!offline){
 if(pw){
   let browser;
   try{
-    browser=await pw.chromium.launch({headless:!rehearse});
+    // Anonymous viewport/link/axe checks are always headless. Never flash 25 windows
+    // before the operator is able to complete an OIDC login.
+    browser=await pw.chromium.launch({headless:true});
     const urls=['/lab',...channels.map(c=>c[2])];const sizes=[320,375,768,1280,1600];
     let failed=0, pages=0, screenshots=0, axeExecuted=0, axeViolations=0, axeUnavailable=0;
     const axeFailureKinds=new Set();
@@ -205,29 +208,89 @@ if(pw){
     add('accessibility.axe_core',!axePath||axeUnavailable||axeExecuted<urls.length*sizes.length?'BLOCKED':axeViolations?'FAIL':'PASS',
       !axePath?'axe-core not installed (npm install --no-save --package-lock=false axe-core)':`WCAG 2.0/2.1/2.2 AA rules: ${axeExecuted} pages audited, ${axeViolations} violation categories, ${axeUnavailable} audits unavailable; failure categories: ${[...axeFailureKinds].join(', ')||'none'}`,'BROWSER');
     if(rehearse){
-      for(const [key,brand,path] of channels){
-        const context=await browser.newContext({viewport:{width:1280,height:900}});
-        const page=await context.newPage();
-        console.log(`Operator browser OIDC: ${key}. Authenticate on WSO2 in the opened window; no passwords are captured by this tool.`);
+      // A TTY is required: unattended CI must never claim human-authenticated proof.
+      if(!process.stdin.isTTY || !process.stdout.isTTY){
+        for(const [key] of channels)
+          add(`rehearsal.${key}`,'BLOCKED','Interactive terminal required for supervised WSO2 login','LIVE_BROWSER');
+      }else{
+        let operatorBrowser=null;
+        const prompt=createInterface({input:process.stdin,output:process.stdout});
+        let aborted=false;
         try{
-          const auth=key.endsWith('-app')?`${brand}-mobile`:key;
-          await page.goto(`${origin}/auth/${auth}/login?returnTo=${encodeURIComponent(path)}`);
-          await page.waitForURL(url=>url.pathname===path,{timeout:240000});
-          const proof=await page.evaluate(async({key,brand})=>{
-            const get=async(url)=>{const r=await fetch(url,{credentials:'same-origin',cache:'no-store'});return {http:r.status,body:await r.json().catch(()=>({}))};};
-            const me=await get('/api/identity/me');const c=me.body.clients?.[key];
-            const other=brand==='aurora'?'brisa':'aurora';
-            const p=await get(`/api/brands/${brand}/profile?client=${key}`);
-            const list=await get(`/api/brands/${brand}/cases?client=${key}`);
-            const denied=await get(`/api/brands/${other}/cases?client=${key}`);
-            return {authenticated:c?.authenticated===true,issuerMatches:(()=>{try{const i=new URL(c?.issuer);return i.protocol==='https:'&&i.hostname==='localhost'&&i.port==='9444'&&i.pathname.includes(`/t/${brand}.identity.test/`);}catch{return false;}})(),
-              scopes:c?.permissions||[],profileHTTP:p.http,casesHTTP:list.http,visibility:list.body.visibility||null,denialHTTP:denied.http};
-          },{key,brand});
-          const passed=proof.authenticated&&proof.issuerMatches&&proof.scopes.includes('ciam:profile:read')&&
-            proof.profileHTTP===200&&proof.casesHTTP===200&&proof.visibility==='OWNER_ONLY'&&proof.denialHTTP===403;
-          add(`rehearsal.${key}`,passed?'PASS':'FAIL',`OIDC=${proof.authenticated}, issuer=${proof.issuerMatches}, profile=${proof.profileHTTP}, cases=${proof.casesHTTP}, visibility=${proof.visibility}, cross-tenant=${proof.denialHTTP}`,'LIVE_BROWSER');
-        }catch{add(`rehearsal.${key}`,'BLOCKED','Operator login or protected browser proof did not complete','LIVE_BROWSER');}
-        finally{await context.close();}
+          // This is a SEPARATE visible browser. No timer automatically closes a login.
+          operatorBrowser=await pw.chromium.launch({headless:false});
+          for(const [key,brand,path] of channels){
+            if(aborted){
+              add(`rehearsal.${key}`,'BLOCKED','Operator stopped the remaining rehearsal','LIVE_BROWSER');
+              continue;
+            }
+            const context=await operatorBrowser.newContext({viewport:{width:1280,height:900}});
+            const page=await context.newPage();
+            const auth=key.endsWith('-app')?`${brand}-mobile`:key;
+            const loginUrl=`${origin}/auth/${auth}/login?returnTo=${encodeURIComponent(path)}`;
+            console.log(`\nWSO2 OPERATOR REHEARSAL: ${key}`);
+            console.log('Complete the real WSO2 login in the visible window.');
+            console.log('Do not type passwords, codes, tokens or private user data in this terminal.');
+            try{
+              try{await page.goto(loginUrl,{waitUntil:'domcontentloaded',timeout:30000});}
+              catch{console.log('Initial navigation did not finish. Inspect the browser (including local TLS trust) and retry manually.');}
+              await page.bringToFront();
+              let finished=false;
+              while(!finished){
+                const action=(await prompt.question(`[${key}] After login returns to the BFF, press Enter to verify; r=retry login, s=skip, q=stop: `)).trim().toLowerCase();
+                if(action==='s'||action==='q'){
+                  add(`rehearsal.${key}`,'BLOCKED',action==='q'?'Operator stopped rehearsal':'Operator skipped authentication','LIVE_BROWSER');
+                  aborted=action==='q';finished=true;continue;
+                }
+                if(action==='r'){
+                  try{await page.goto(loginUrl,{waitUntil:'domcontentloaded',timeout:30000});}
+                  catch{console.log('Navigation not complete. Browser remains open for inspection.');}
+                  continue;
+                }
+                if(action!==''){console.log('Choose Enter, r, s or q.');continue;}
+                let current;
+                try{current=new URL(page.url());}catch{current=null;}
+                if(current?.origin!==new URL(origin).origin){
+                  console.log('The browser has not returned to the local BFF. Finish authentication or choose s to skip.');
+                  continue;
+                }
+                // Some valid BFF callbacks land on /lab rather than the portal. Navigate
+                // within the SAME authenticated browser context before protected readback.
+                try{
+                  if(current.pathname!==path)await page.goto(new URL(path,origin).href,{waitUntil:'domcontentloaded',timeout:18000});
+                  const proof=await page.evaluate(async({key,brand})=>{
+                    const get=async(url)=>{const r=await fetch(url,{credentials:'same-origin',cache:'no-store'});return {http:r.status,body:await r.json().catch(()=>({}))};};
+                    const me=await get('/api/identity/me');const c=me.body.clients?.[key];
+                    const other=brand==='aurora'?'brisa':'aurora';
+                    const p=await get(`/api/brands/${brand}/profile?client=${key}`);
+                    const list=await get(`/api/brands/${brand}/cases?client=${key}`);
+                    const denied=await get(`/api/brands/${other}/cases?client=${key}`);
+                    return {authenticated:c?.authenticated===true,issuerMatches:(()=>{try{const i=new URL(c?.issuer);return i.protocol==='https:'&&i.hostname==='localhost'&&i.port==='9444'&&i.pathname.includes(`/t/${brand}.identity.test/`);}catch{return false;}})(),
+                      profileScope:(c?.permissions||[]).includes('ciam:profile:read'),
+                      profileHTTP:p.http,casesHTTP:list.http,visibility:list.body.visibility||null,denialHTTP:denied.http};
+                  },{key,brand});
+                  if(!proof.authenticated){
+                    console.log('No authenticated session for this client was proven. Browser remains open; retry or skip.');
+                    continue;
+                  }
+                  const passed=proof.issuerMatches&&proof.profileScope&&proof.profileHTTP===200&&
+                    proof.casesHTTP===200&&proof.visibility==='OWNER_ONLY'&&proof.denialHTTP===403;
+                  const detail=`OIDC=true, issuer=${proof.issuerMatches}, profileScope=${proof.profileScope}, profile=${proof.profileHTTP}, cases=${proof.casesHTTP}, visibility=${proof.visibility}, cross-tenant=${proof.denialHTTP}`;
+                  add(`rehearsal.${key}`,passed?'PASS':'FAIL',detail,'LIVE_BROWSER');
+                  console.log(`${key}: ${passed?'PASS':'FAIL'} — ${detail}`);
+                  finished=true; // Browser closes only AFTER this explicit verification attempt.
+                }catch{
+                  console.log('Protected readback could not complete. Browser remains open; retry or skip.');
+                }
+              }
+            }finally{await context.close();}
+          }
+        }catch{
+          for(const [key] of channels){
+            if(!results.some(r=>r.id===`rehearsal.${key}`))
+              add(`rehearsal.${key}`,'BLOCKED','Operator browser unavailable or interrupted','LIVE_BROWSER');
+          }
+        }finally{prompt.close();await operatorBrowser?.close();}
       }
     }else{add('rehearsal.four_oidc','BLOCKED','Operator-authenticated OIDC flows not run; use --rehearse with authorized test identities','LIVE_BROWSER');}
   }catch{add('browser.runner','BLOCKED','Playwright browser unavailable, not a successful accessibility or responsive run','BROWSER');}
