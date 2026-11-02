@@ -108,3 +108,82 @@ button, a, input, textarea, select { -webkit-tap-highlight-color:transparent; }
 }
 @media (prefers-contrast:more) { .v5-card,.v5-panel,.story-card,.v5-channel { border-width:2px; } }
 @media print { .p-presenter-dock,.p-dialog,.p-skip { display:none !important; } }
+
+/* CIAM_P120_WCAG_AUDIT_FIX_V1
+ * Anonymous route evidence, 2026-11-02: 25/25 axe audits, 25 color-contrast
+ * rule occurrences and four target-size occurrences. All rules below apply
+ * only to the canonical BFF interface. No role, session, identity or MFA logic.
+ *
+ * live-retail-v5.css and live-workspace-p113.css load later than this file;
+ * intentional !important declarations are limited to audited color/target fixes.
+ */
+
+/* Experience Center — secondary content remains visible, not decorative. */
+.app-shell .mode-switch button:not(.selected) { color:#40556a !important; }
+.app-shell .floating-user,
+.app-shell .mini-brand.mini-aurora { color:#07574f !important; }
+.app-shell .section-heading p:last-child { color:#455b70 !important; }
+.app-shell .story-card > p,
+.app-shell .page-intro > p:last-child { color:#485a70 !important; }
+.app-shell .overline,
+.app-shell .eyebrow { color:#1e625a !important; }
+.app-shell .floating small { color:#486075 !important; }
+.app-shell .kpi-row span { color:#4e6075 !important; }
+.app-shell .footer,
+.app-shell .footer span { color:#516174 !important; }
+.app-shell .sidebar .sidebar-bottom span.sidebar-avatar { color:#ffffff !important; }
+.app-shell .badge-amber { color:#74480a !important; }
+.app-shell .mini-brand.mini-brisa { color:#783e30 !important; }
+.app-shell .story-bottom { color:#4d5c6d !important; }
+.app-shell .story-number { color:#4b5c6b !important; }
+
+/* Branded channel catalogs — keep Aurora/Brisa branding and readable labels. */
+.app-shell .badge-slate,
+.retail-site .badge-slate { color:#405467 !important; }
+.retail-site .v5-products .v5-product > small,
+.retail-site .rt-header .rt-wordmark small { color:#604a3d !important; }
+
+/* Correct the mobile-browser hero outline link over the tinted hero field.
+ * A white label surface eliminates the dark-on-teal contrast failure without
+ * changing either brand's primary hero/background palette. */
+.retail-site.v5-mobile-site .rt-hero .v5-hero-cta a.rt-btn.rt-btn-outline {
+  background-color:#ffffff !important;
+  color:#233041 !important;
+  border:1px solid #cad5df !important;
+  text-decoration:none;
+}
+.retail-site.v5-mobile-site .rt-hero .v5-hero-cta a.rt-btn.rt-btn-outline:hover {
+  background-color:#edf5f7 !important;
+  color:#233041 !important;
+}
+
+/* The mobile-preview demo banner also sits on a teal background in the
+ * audited 1280/1600px layouts; never inherit a dark branded link color there. */
+.retail-site.v5-mobile-site .rt-demo-banner a {
+  color:#ffffff !important;
+  text-decoration:underline;
+  text-underline-offset:3px;
+}
+
+/* Mobile-styled client viewed in a desktop browser: prevent the reload button
+ * from visually colliding with adjacent same-row targets. Browser target-size
+ * verification is still required; the original failing target was already
+ * 96.69 x 50 CSS pixels, so raw dimensions alone do not explain the finding. */
+.retail-site.v5-mobile-site .v5-identity-strip {
+  column-gap:20px !important;
+  row-gap:14px !important;
+}
+.retail-site.v5-mobile-site .v5-identity-strip button.rt-btn.rt-btn-outline {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  box-sizing:border-box;
+  min-height:48px !important;
+  min-width:112px !important;
+  margin:4px 6px !important;
+  padding:10px 16px !important;
+  position:relative;
+}
+@media (max-width:640px) {
+  .retail-site.v5-mobile-site .v5-identity-strip { row-gap:14px !important; }
+}

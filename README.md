@@ -3,6 +3,13 @@
 <!-- CIAM_P120_P123_CURRENT_START -->
 ## P1.20–P1.23 — Demo operations (current)
 
+**Legacy Vite previews retired (post-P1.23):** The standalone React retail, mobile
+and operations routes no longer select synthetic identities or modify local preview
+accounts. They are informational entry points to the existing live BFF portals and
+presenter/evidence pages. The live BFF business workflows and OIDC callbacks were
+not changed. Mobile remains a responsive browser view, not a native application.
+
+
 This section is the **operational authority for the P1.20–P1.23 enhancement**.
 Earlier dated acceptance ledgers and legacy implementation proposals below are historical,
 not proof of a fresh rehearsal. No successful TOTP approval, delegated B2B administration,

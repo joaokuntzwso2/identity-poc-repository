@@ -132,24 +132,40 @@ if(pw){
     browser=await pw.chromium.launch({headless:!rehearse});
     const urls=['/lab',...channels.map(c=>c[2])];const sizes=[320,375,768,1280,1600];
     let failed=0, pages=0, screenshots=0, axeExecuted=0, axeViolations=0, axeUnavailable=0;
+    const axeFailureKinds=new Set();
     const screenshotsDir=join(homedir(),'Downloads','ciam-demo-evidence','screenshots');
     await mkdir(screenshotsDir,{recursive:true,mode:0o700});
     for(const url of urls){
       for(const width of sizes){
         const context=await browser.newContext({viewport:{width,height:900},deviceScaleFactor:1});
+        // Init scripts execute before application JS and work under restrictive CSP where
+        // addScriptTag({path}) may be blocked. No network/CDN or application tokens involved.
+        let axeInitError=null;
+        if(axePath){try{await context.addInitScript({path:axePath});}
+          catch(e){axeInitError=e?.name||'INIT_ERROR';}}
         const page=await context.newPage();
         try{
           const response=await page.goto(origin+url,{waitUntil:'domcontentloaded',timeout:18000});
           await page.locator('#main-content').waitFor({timeout:12000});
           if (axePath) {
             try{
-              await page.addScriptTag({path:axePath});
+              if(axeInitError)throw Error('AXE_INIT_ERROR');
               const audit=await page.evaluate(async()=>{
+                if(!window.axe||typeof window.axe.run!=='function')return {error:'AXE_NOT_AVAILABLE'};
                 const report=await window.axe.run(document,{runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa','wcag22aa']}});
                 return {violations:report.violations.length};
               });
+              if(audit.error)throw Error(audit.error);
               axeExecuted++;axeViolations+=audit.violations;
-            }catch{axeUnavailable++;}
+            }catch(e){
+              axeUnavailable++;
+              // Report only a bounded error category, not URLs, subjects, tokens or page content.
+              const message=String(e?.message||'');
+              axeFailureKinds.add(message.includes('AXE_NOT_AVAILABLE')?'AXE_NOT_AVAILABLE':
+                message.includes('AXE_INIT_ERROR')?'AXE_INIT_ERROR':
+                /Content Security Policy|CSP/i.test(message)?'CSP':
+                /Timeout/i.test(message)?'TIMEOUT':'AUDIT_EXCEPTION');
+            }
           }
           const checks=await page.evaluate(()=>{
             const overflow=document.documentElement.scrollWidth>innerWidth+2;
@@ -187,7 +203,7 @@ if(pw){
     }
     add('browser.responsive_and_links',failed?'FAIL':'PASS',`${pages}/${urls.length*sizes.length} page/width checks ran; ${failed} issues; ${screenshots} anonymous screenshots`, 'BROWSER');
     add('accessibility.axe_core',!axePath||axeUnavailable||axeExecuted<urls.length*sizes.length?'BLOCKED':axeViolations?'FAIL':'PASS',
-      !axePath?'axe-core not installed (npm install --no-save --package-lock=false axe-core)':`WCAG 2.0/2.1/2.2 AA rules: ${axeExecuted} pages audited, ${axeViolations} violation categories, ${axeUnavailable} audits unavailable`,'BROWSER');
+      !axePath?'axe-core not installed (npm install --no-save --package-lock=false axe-core)':`WCAG 2.0/2.1/2.2 AA rules: ${axeExecuted} pages audited, ${axeViolations} violation categories, ${axeUnavailable} audits unavailable; failure categories: ${[...axeFailureKinds].join(', ')||'none'}`,'BROWSER');
     if(rehearse){
       for(const [key,brand,path] of channels){
         const context=await browser.newContext({viewport:{width:1280,height:900}});
