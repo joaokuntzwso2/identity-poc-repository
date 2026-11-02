@@ -187,3 +187,64 @@ button, a, input, textarea, select { -webkit-tap-highlight-color:transparent; }
 @media (max-width:640px) {
   .retail-site.v5-mobile-site .v5-identity-strip { row-gap:14px !important; }
 }
+
+/* CIAM_P120_WCAG_AUDIT_FIX_V2
+ * Based on anonymous 25/25 axe audits captured 2026-11-02 at release 5e4509d.
+ * Only the branded mobile-browser views at >=1121px had remaining findings.
+ * Styling only: no authentication, session, business or WSO2 behavior changes.
+ */
+
+/* The nav links inherited dark text against a teal button fill on the two
+ * 580px-wide mobile shells at desktop viewports. Give each link its own opaque
+ * light surface, plus a high-contrast label regardless of inherited theme. */
+.retail-site.v5-mobile-site .rt-header nav.rt-primary-nav a,
+.retail-site.v5-mobile-site .rt-header nav.rt-primary-nav a:visited,
+.retail-site.v5-mobile-site .rt-header nav.rt-primary-nav a:hover {
+  box-sizing: border-box;
+  background-color: #ffffff !important;
+  color: #233041 !important;
+  border: 1px solid #b7cbd6 !important;
+  border-radius: 9px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 10px 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.retail-site.v5-mobile-site.retail-brisa .rt-header nav.rt-primary-nav a,
+.retail-site.v5-mobile-site.retail-brisa .rt-header nav.rt-primary-nav a:visited,
+.retail-site.v5-mobile-site.retail-brisa .rt-header nav.rt-primary-nav a:hover {
+  color: #392f29 !important;
+}
+
+/* In the wide viewport, the mobile shell still has a maximum width of 580px.
+ * Give each identity-strip action a separate, unobscured row. The prior
+ * 112x48px button was flagged by axe despite nominally adequate dimensions;
+ * separating pointer targets eliminates adjacency as a possible cause.
+ * The native width/height and visible keyboard focus remain intact. */
+@media (min-width: 1121px) {
+  .retail-site.v5-mobile-site > .v5-identity-strip {
+    display: grid !important;
+    grid-template-columns: minmax(0,1fr) !important;
+    justify-items: stretch !important;
+    align-items: stretch !important;
+    gap: 16px !important;
+    padding: 16px 20px !important;
+  }
+  .retail-site.v5-mobile-site > .v5-identity-strip > span {
+    max-width: 100% !important;
+  }
+  .retail-site.v5-mobile-site > .v5-identity-strip > a,
+  .retail-site.v5-mobile-site > .v5-identity-strip > button.rt-btn.rt-btn-outline {
+    box-sizing: border-box !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 48px !important;
+    margin: 0 !important;
+    transform: none !important;
+    position: relative;
+  }
+}
