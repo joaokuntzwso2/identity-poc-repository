@@ -9,6 +9,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
+import { readAuthorityJournalPin, evaluateAuthorityReadback, commandFailureSummary } from './ciam-readback-policy.mjs';
 const run = promisify(execFile);
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const args=new Set(process.argv.slice(2));
@@ -25,10 +26,10 @@ const channels=[
 ];
 const results=[];const safe=(text)=>String(text).slice(0,180).replace(/[\r\n\x00-\x1f]/g,' ');
 const add=(id,status,detail,kind='GATE')=>results.push({id,status,detail:safe(detail),kind});
-const command=async(file,argv,{timeout=90000}={})=>{
-  try{ const r=await run(file,argv,{cwd:root,timeout,maxBuffer:1048576,env:process.env});
+const command=async(file,argv,{timeout=90000,env=process.env}={})=>{
+  try{ const r=await run(file,argv,{cwd:root,timeout,maxBuffer:1048576,env});
     return {ok:true,stdout:r.stdout,stderr:r.stderr};
-  }catch(e){return {ok:false,exitCode:e.code||'UNKNOWN'};}
+  }catch(e){return {ok:false,exitCode:e.code||'UNKNOWN',stdout:String(e.stdout||'').slice(0,1048576),stderr:String(e.stderr||'').slice(0,1048576)};}
 };
 const load=async(path)=>readFile(join(root,path)).catch(()=>null);
 const sha=(bytes)=>bytes?createHash('sha256').update(bytes).digest('hex'):null;
@@ -108,6 +109,23 @@ if(offline){
     'Anonymous preflight cookies never establish OIDC login. Authenticate each channel in a real browser.');
 }
 if(deep&&!offline){
+  // The authority journal is a VERSION PIN and historical ownership record, not
+  // a substitute for live management readback. Never silently default it to v3.
+  const pin=await readAuthorityJournalPin();
+  if(!pin.ok){
+    add('live.profile_authority_readback','BLOCKED',`Read-only authority reconciliation cannot start: ${pin.reason}`);
+  }else{
+    const r=await command('bash',['scripts/ciam-v10.sh','authorization-reconcile'],{
+      timeout:120000,env:{...process.env,WSO2_CIAM_V10_ROLE_API:pin.version}
+    });
+    if(!r.ok){
+      add('live.profile_authority_readback','FAIL',`Pinned ${pin.version} readback failed: ${commandFailureSummary(r)}`);
+    }else{
+      const proof=evaluateAuthorityReadback(r.stdout,pin.version);
+      add('live.profile_authority_readback',proof.ok?'PASS':'BLOCKED',
+        proof.ok?`${proof.summary}; pinned ${pin.version}`:`Readback did not prove the required profile resources/scopes/roles: ${proof.reason}`);
+    }
+  }
   const readbacks=[
     ['live.client_readback','python3',['scripts/ciam-v5-four-client-readback.py']],
     ['live.business_readback','python3',['deploy/ciam-v10/phase4/business-bootstrap.py','verify']],
@@ -115,7 +133,7 @@ if(deep&&!offline){
   ];
   for(const [id,exe,argv] of readbacks){
     const r=await command(exe,argv,{timeout:90000});
-    add(id,r.ok?'BLOCKED':'FAIL',r.ok?'Read-only command exited 0; inspect its management readback (exit code alone does not prove all resources)':'Read-only command failed');
+    add(id,r.ok?'BLOCKED':'FAIL',r.ok?'Command exited 0 but no strict field-level evidence parser exists; inspect the private management readback':`Read-only command failed: ${commandFailureSummary(r)}`);
   }
 }else{add('live.management_readback','BLOCKED','Run --deep-readback for read-only inventory calls; exact scopes, apps, roles, audiences remain unverified');}
 let pw=null, axePath=null;
@@ -291,6 +309,12 @@ if(pw){
               add(`rehearsal.${key}`,'BLOCKED','Operator browser unavailable or interrupted','LIVE_BROWSER');
           }
         }finally{prompt.close();await operatorBrowser?.close();}
+      }
+      // In the same process, fresh four-channel proof can satisfy the browser
+      // session gate. Never import/assume proof from an earlier JSON report.
+      if(channels.every(([key])=>results.some(r=>r.id===`rehearsal.${key}`&&r.status==='PASS'))){
+        const sessionGate=results.find(r=>r.id==='live.browser_session');
+        if(sessionGate){sessionGate.status='PASS';sessionGate.detail='Four separate operator-authenticated live browser sessions verified in this run';}
       }
     }else{add('rehearsal.four_oidc','BLOCKED','Operator-authenticated OIDC flows not run; use --rehearse with authorized test identities','LIVE_BROWSER');}
   }catch{add('browser.runner','BLOCKED','Playwright browser unavailable, not a successful accessibility or responsive run','BROWSER');}
