@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
 import { readAuthorityJournalPin, evaluateAuthorityReadback, commandFailureSummary } from './ciam-readback-policy.mjs';
 import { evaluateBusinessVerify, evaluateBusinessRoleAudit } from './ciam-phase4-evidence.mjs';
+import { evaluateFourClientReadback, evaluateCarbonSuperReadback } from './ciam-management-readback-evidence.mjs';
 const run = promisify(execFile);
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const args=new Set(process.argv.slice(2));
@@ -148,7 +149,14 @@ if(deep&&!offline){
       }
       continue;
     }
-    add(id,r.ok?'BLOCKED':'FAIL',r.ok?'Command exited 0 but no strict field-level evidence parser exists; inspect the private management readback':`Read-only command failed: ${commandFailureSummary(r)}`);
+    if(!r.ok){
+      add(id,'FAIL',`Management GET readback command failed: ${commandFailureSummary(r)}`);
+      continue;
+    }
+    const proof=id==='live.client_readback'
+      ?evaluateFourClientReadback(r.stdout)
+      :evaluateCarbonSuperReadback(r.stdout);
+    add(id,proof.status,proof.summary);
   }
 }else{add('live.management_readback','BLOCKED','Run --deep-readback for read-only inventory calls; exact scopes, apps, roles, audiences remain unverified');}
 let pw=null, axePath=null;
