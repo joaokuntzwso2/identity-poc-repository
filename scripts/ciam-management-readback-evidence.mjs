@@ -56,9 +56,14 @@ export function evaluateCarbonSuperReadback(raw){
     return reason('BLOCKED','CARBON_COLLECTIONS_INCOMPLETE');
   for(const name of COLLECTIONS){
     const row=d.inventory[name];
-    if(!object(row) || row.status!=='FULL_FIRST_PAGE' ||
-       !integer(row.pageCount) || row.pageCount>100 ||
-       !integer(row.reportedTotal) || row.pageCount!==row.reportedTotal)
+    const isPaged=name==='superApiResources' && row?.status==='FULL_PAGINATED' &&
+      integer(row?.pagesFetched) && row.pagesFetched>=2 && row.pagesFetched<=10 &&
+      row.paginationMode==='WSO2_AFTER_CURSOR' &&
+      integer(row.pageCount) && row.pageCount>100 && row.pageCount<=1000 &&
+      row.pageCount<=row.pagesFetched*100;
+    const isSingle=row?.status==='FULL_FIRST_PAGE' && integer(row?.pageCount) && row.pageCount<=100;
+    if(!object(row) || (!isPaged && !isSingle) ||
+       !integer(row.pageCount) || !integer(row.reportedTotal) || row.pageCount!==row.reportedTotal)
       return reason('BLOCKED',`CARBON_COLLECTION_NOT_FULL_${name}`);
   }
   const inv=d.inventory;
@@ -69,7 +74,8 @@ export function evaluateCarbonSuperReadback(raw){
     return reason('FAIL','CARBON_TENANT_DOMAIN_DRIFT');
   for(const [name,field] of [['superApplications','applicationNames'],
      ['superApiResources','resourceIdentifiers'],['superScimRolesV2','roleNames']]){
-    if(!strings(inv[name][field],inv[name].pageCount))
+    if(!strings(inv[name][field],inv[name].pageCount) ||
+       (name==='superApiResources' && new Set(inv[name][field]).size!==inv[name][field].length))
       return reason('BLOCKED',`CARBON_COLLECTION_FIELDS_UNVERIFIED_${name}`);
   }
   const users=inv.superScimUsers;
