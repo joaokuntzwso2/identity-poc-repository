@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
 import { readAuthorityJournalPin, evaluateAuthorityReadback, commandFailureSummary } from './ciam-readback-policy.mjs';
+import { evaluateBusinessVerify, evaluateBusinessRoleAudit } from './ciam-phase4-evidence.mjs';
 const run = promisify(execFile);
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const args=new Set(process.argv.slice(2));
@@ -133,6 +134,20 @@ if(deep&&!offline){
   ];
   for(const [id,exe,argv] of readbacks){
     const r=await command(exe,argv,{timeout:90000});
+    if(id==='live.business_readback'){
+      if(r.ok){
+        const verification=evaluateBusinessVerify(r.stdout);
+        add(id,verification.ok?'PASS':'BLOCKED',verification.summary);
+      }else{
+        add(id,'FAIL',`Phase 4 GET-only verifier failed: ${commandFailureSummary(r)}`);
+        // The independent audit is also GET-only. It explains the particular role
+        // drift without regranting scopes or weakening the original verifier.
+        const audit=await command('python3',['scripts/ciam-phase4-role-readback.py'],{timeout:120000});
+        const proof=evaluateBusinessRoleAudit(audit.stdout);
+        add('live.business_role_readback',proof.kind==='CONFIRMED_ADMIN_APPROVAL_DRIFT'?'FAIL':'BLOCKED',proof.summary);
+      }
+      continue;
+    }
     add(id,r.ok?'BLOCKED':'FAIL',r.ok?'Command exited 0 but no strict field-level evidence parser exists; inspect the private management readback':`Read-only command failed: ${commandFailureSummary(r)}`);
   }
 }else{add('live.management_readback','BLOCKED','Run --deep-readback for read-only inventory calls; exact scopes, apps, roles, audiences remain unverified');}
