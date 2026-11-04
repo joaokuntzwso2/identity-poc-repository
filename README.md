@@ -3447,3 +3447,24 @@ verified management authority for one business group and account deactivation.
 See `docs/CIAM_P224_P229_PARTNER_LIFECYCLE.md`. Offline tests are not live
 acceptance; group membership is not proof of downstream business authorization.
 <!-- /P224_LIFECYCLE_README_V1 -->
+
+<!-- CIAM_P2_24_31_SOURCE_PACKAGE_BEGIN -->
+## P2.24–P2.31 Advanced CIAM — source increment, runtime pending
+
+The [advanced capability matrix](docs/P2_24_31_CAPABILITY_MATRIX.md),
+[non-destructive acceptance runbook](docs/P2_24_31_ACCEPTANCE_RUNBOOK.md),
+[separate consent/delegation upgrade proposal](docs/P2_24_31_CONSENT_AND_DELEGATION_UPGRADE.md),
+and [enterprise stories](docs/P2_24_31_ENTERPRISE_JOURNEYS.md), and
+[source test evidence](docs/P2_24_31_SOURCE_TEST_EVIDENCE.md) document the
+WSO2 7.3.0 GA limits. `/p2/advanced` integrates a source-only status view into
+the Experience Center, displaying **only actual BFF/WSO2 session evidence**.
+
+`scripts/p2/cli.mjs` contains opt-in, narrow, durable-journal-guarded Aurora
+child-organization creation and SCIM read/disable operations; `node --test
+tests/p2/*.test.mjs` runs offline security regressions. The installer and tests
+**do not** provision WSO2, deploy a UI, establish delegated admin, install
+passkey/federation, enable consent, prove live MFA, or change any active image.
+No P2 capability has `VERIFIED_LIVE` status from this package author.
+Consent v2 requires **7.3.0.12+** and actor-aware delegation requires
+**7.3.0.18+**, with a separate approval-gated migration.
+<!-- CIAM_P2_24_31_SOURCE_PACKAGE_END -->

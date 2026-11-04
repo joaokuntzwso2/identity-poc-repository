@@ -86,7 +86,7 @@
       <div class="nav-section"><div class="nav-label">SEGURANÇA E EVIDÊNCIAS</div>
         ${menu('security','Arquitetura e segurança','security')}${menu('evidence','Evidência técnica','evidence')}<a class="nav-link" href="/security-evidence-p2" data-p2-inline aria-label="Centro de evidências P2">${icon('evidence')}<span>Centro de evidências P2</span></a>
         ${menu('identities','Identidades WSO2','user')}${menu('privacy','Privacidade e consentimento','privacy')}
-        ${menu('b2b','Parceiros B2B','b2b')}${menu('delegation','Agentes e delegação','security')}</div>
+        ${menu('b2b','Parceiros B2B','b2b')}${menu('delegation','Agentes e delegação','security')}<a class="nav-link" href="/p2/advanced">◈ <span>CIAM avançado P2</span></a></div>
       </nav><div class="sidebar-bottom"><span class="sidebar-avatar">IS</span><div><strong>WSO2 IS 7.3</strong><span>Sem persona fictícia</span></div></div>
       </aside><div class="main-shell"><header class="topbar"><div class="top-left"><button class="menu-toggle" data-action="menu" aria-label="Abrir menu">☰</button>
       <span class="breadcrumb">Identity Experience Center <span>/</span> ${areaName}</span></div>

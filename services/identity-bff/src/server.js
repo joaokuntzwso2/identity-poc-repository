@@ -113,6 +113,8 @@ async function sessionState(s) {
           entry.acrFromVerifiedIdToken = typeof login.claims.acr === 'string' ? login.claims.acr : null;
           entry.amrFromVerifiedIdToken = Array.isArray(login.claims.amr) ?
             login.claims.amr.filter(x => typeof x === 'string').slice(0, 8) : [];
+          entry.authTimeFromVerifiedIdToken = Number.isSafeInteger(login.claims.auth_time) ?
+            login.claims.auth_time : null;
         }
       } catch { unavailable = true; }
     }
@@ -278,6 +280,9 @@ async function api(req, res, u, s) {
   return reply(res, 404, { error: 'route_not_found' });
 }
 const STATIC = Object.freeze({
+  '/p2/advanced': 'live-p2-advanced.html',
+  '/live-p2-advanced.js': 'live-p2-advanced.js',
+  '/live-p2-advanced.css': 'live-p2-advanced.css',
   '/identity-live-v2': 'live-identity-v2.html',
   '/live-identity-v2.js': 'live-identity-v2.js',
   '/live-identity-v2.css': 'live-identity-v2.css',
