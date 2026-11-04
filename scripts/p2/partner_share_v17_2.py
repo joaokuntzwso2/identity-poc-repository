@@ -12,7 +12,7 @@ import hashlib, importlib.util, json, os, re, sys, time, urllib.parse
 from pathlib import Path
 
 TENANT='aurora.identity.test'
-V17_SHA='7fd3d6ffeb069cc6eef43e98a4a67c3406a9ac4777965639c9c0e0c19daa4395'
+V17_SHA='fea42472a4a91d4d04c368131ae4e569b5dc1aa8ce8eb5fe8040ccee344f6a53'
 V17='scripts/p2/partner_share_v17.py'
 STAGE='V17_2'
 

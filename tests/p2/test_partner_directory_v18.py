@@ -51,8 +51,14 @@ class TestDirectory(unittest.TestCase):
         self.private=pathlib.Path(self.tmp.name)
         self.m=FakeM();self.scim=FakeScim()
     def test_scope_exact_set(self):
-        self.assertEqual(len(x.SCOPES),6)
-        self.assertEqual(len(set(x.SCOPES)),6)
+        self.assertEqual(set(x.SCOPES), {
+            'internal_org_user_mgt_create',
+            'internal_org_user_mgt_list',
+            'internal_org_user_mgt_view',
+            'internal_org_group_mgt_create',
+            'internal_org_group_mgt_view',
+        })
+        self.assertEqual(len(x.SCOPES), len(set(x.SCOPES)))
         self.assertFalse(any('delete' in s or 'update' in s or 'role' in s for s in x.SCOPES))
     def test_member_templates_are_not_people(self):
         self.assertEqual(len(x.MEMBERS),2)

@@ -13,17 +13,18 @@ TENANT='aurora.identity.test'
 BASE='https://localhost:9444'
 ACTOR_FILE='p2-aurora-partner-directory-actor.private.json'
 V17_JOURNAL='p2-aurora-partner-only-share-v17.private.json'
-V17_SHA='7fd3d6ffeb069cc6eef43e98a4a67c3406a9ac4777965639c9c0e0c19daa4395'
+V17_SHA='fea42472a4a91d4d04c368131ae4e569b5dc1aa8ce8eb5fe8040ccee344f6a53'
 ROOT_FP='4548812d1a94a3ff'
 PARTNER_FP='a9c40a10acabab52'
 APP_FP='7b4495d1ff5af7fd'
 SCHEMA='p2.24.aurora.partner-directory.v18'
 ACTOR_SCHEMA='p2.24.aurora.partner-directory-actor.v18'
+# V18_ORGANIZATION_SCOPE_CONTRACT_V36: GA's organization Groups view scope covers GET/list.
 USER_SCHEMA='urn:ietf:params:scim:schemas:core:2.0:User'
 GROUP_SCHEMA='urn:ietf:params:scim:schemas:core:2.0:Group'
 SCOPES=tuple(sorted((
   'internal_org_user_mgt_list','internal_org_user_mgt_view','internal_org_user_mgt_create',
-  'internal_org_group_mgt_list','internal_org_group_mgt_view','internal_org_group_mgt_create')))
+  'internal_org_group_mgt_view','internal_org_group_mgt_create')))
 MEMBERS=(('p2-aurora-returns-operator','ReturnsOperator','AuroraReturnsOperators'),
          ('p2-aurora-returns-reviewer','ReturnsReviewer','AuroraReturnsReviewers'))
 UUID=re.compile(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z')
@@ -92,11 +93,14 @@ def actor_check(m,http,admin,record,partner):
             need(type(scope) is dict and type(scope.get('name')) is str,
                  'V18_ACTOR_SCOPE_SHAPE_INVALID')
             names.append(scope['name'])
-        need(len(names)==3 and len(set(names))==3 and a['id'] not in groups,
+        need(len(names) in (2,3) and len(set(names))==len(names) and a['id'] not in groups,
              'V18_ACTOR_SCOPE_RESOURCE_AMBIGUOUS')
         groups[a['id']]=names;allscopes+=names
-    need(sorted(allscopes)==list(SCOPES) and len(set(allscopes))==6 and
-         all(set(x)==set(SCOPES[:3]) or set(x)==set(SCOPES[3:]) for x in groups.values()),
+    expected_users={s for s in SCOPES if s.startswith('internal_org_user_mgt_')}
+    expected_groups={s for s in SCOPES if s.startswith('internal_org_group_mgt_')}
+    need(sorted(allscopes)==list(SCOPES) and len(set(allscopes))==len(SCOPES) and
+         {frozenset(x) for x in groups.values()}==
+         {frozenset(expected_users),frozenset(expected_groups)},
          'V18_ACTOR_EXCESS_OR_MISSING_PERMISSION')
     return record['clientId'],record['clientSecret']
 

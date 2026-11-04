@@ -132,8 +132,17 @@ def classify(shares,global_mode,mappings,app_id,partner_id,root_id):
             need(row.get('parentId') in (None,root_id) and
                  row.get('status') in (None,'ACTIVE'), 'V17_PARTNER_SHARE_CONTEXT_CHANGED')
             mode=row.get('sharingMode')
-            need(isinstance(mode,dict) and mode.get('policy')==POLICY,
-                 'V17_SHARE_POLICY_NOT_EXACT')
+            need(isinstance(mode,dict),'V17_SHARE_MODE_UNVERIFIED')
+            if 'policy' in mode:
+                need(mode['policy']==POLICY,'V17_SHARE_POLICY_NOT_EXACT')
+            else:
+                # WSO2 GET can omit selected-org-only policy. Never claim
+                # a policy was returned when none was actually exposed.
+                need(not global_mode and len(shares)==1 and len(ids)==1 and
+                     row.get('parentId')==root_id and
+                     row.get('status')=='ACTIVE' and
+                     row.get('hasChildren') is False and role_none(mode),
+                     'V17_SELECTED_ONLY_OMITTED_POLICY_EVIDENCE_INSUFFICIENT')
             need(row.get('roles') in (None,[]), 'V17_SHARED_ROLES_PRESENT_BLOCKED')
             # Only missing/ambiguous role state is PENDING; an explicit non-NONE
             # role mode is a hard privilege-expansion violation.
@@ -160,12 +169,63 @@ def classify(shares,global_mode,mappings,app_id,partner_id,root_id):
     if len(shares)==1 and len(mappings)==1:return 'EXACT'
     return 'PENDING'
 
+def v30_enriched_shares(m,http,admin,v14,app_id,partner_id,root_id):
+    """Require bounded default, enriched, and recursive sharing GETs to agree."""
+    shares,global_mode=v14.read_shares(m,http,admin,app_id)
+    if shares is None:
+        return shares,global_mode
+    need(type(shares) is list and len(shares)==1,
+         'V30_DEFAULT_SHARE_COLLECTION_NOT_EXCLUSIVE')
+    before=shares[0]
+    need(type(before) is dict and before.get('id')==partner_id and
+         before.get('parentId')==root_id and before.get('status')=='ACTIVE' and
+         before.get('hasChildren') is False and before.get('roles') in (None,[]),
+         'V30_DEFAULT_SHARE_CONTEXT_NOT_EXACT')
+    need(global_mode in (None,{}),'V30_BROAD_GLOBAL_SHARING_BLOCKED')
+    selected=[]
+    for recurse in ('false','true'):
+        route=(f'{BASE}/{app_id}/share?limit=100&recursive={recurse}'
+               '&attributes=sharingMode')
+        status,doc,_=http.call('GET',route,basic=admin)
+        need(status==200 and type(doc) is dict,
+             'V30_ENRICHED_SHARE_HTTP_OR_SHAPE_INVALID')
+        rows=doc.get('organizations')
+        need(type(rows) is list and len(rows)==1,
+             'V30_ENRICHED_SHARE_COLLECTION_NOT_EXCLUSIVE')
+        links=doc.get('links',[])
+        need(type(links) is list and
+             all(type(x) is dict and isinstance(x.get('rel'),str) for x in links) and
+             not any(x.get('rel')=='next' for x in links),
+             'V30_ENRICHED_SHARE_PAGINATION_UNVERIFIED')
+        if 'totalResults' in doc:
+            need(doc['totalResults']==1,
+                 'V30_ENRICHED_SHARE_TOTAL_NOT_EXACT')
+        need(doc.get('sharingMode') in (None,{}),
+             'V30_GLOBAL_POLICY_PRESENT_BLOCKED')
+        row=rows[0]
+        need(type(row) is dict and row.get('id')==partner_id and
+             row.get('parentId')==root_id and row.get('status')=='ACTIVE' and
+             row.get('hasChildren') is False and row.get('roles') in (None,[]),
+             'V30_ENRICHED_PARTNER_CONTEXT_NOT_EXACT')
+        for field in ('id','parentId','status','hasChildren','roles'):
+            need(before.get(field)==row.get(field),
+                 'V30_DEFAULT_AND_ENRICHED_READBACK_CONFLICT')
+        mode=row.get('sharingMode')
+        need(type(mode) is dict and
+             ('policy' not in mode or mode.get('policy')==POLICY) and
+             role_none(mode),
+             'V30_ENRICHED_POLICY_OR_ROLE_UNVERIFIED')
+        selected.append(row)
+    need(selected[0].get('sharingMode')==selected[1].get('sharingMode'),
+         'V30_DIRECT_AND_RECURSIVE_SHARING_CONFLICT')
+    return [selected[0]],global_mode
+
 def snapshot(m,http,admin,v14,app_id,partner_id,root_id):
     """Reuses V14's thoroughly bounded share pagination and V15's second API."""
     need(bool(m.UUID.fullmatch(app_id)) and bool(m.UUID.fullmatch(partner_id)),
          'V17_APP_OR_ORG_UUID_INVALID')
     shares=None;global_mode=None
-    try:shares,global_mode=v14.read_shares(m,http,admin,app_id)
+    try:shares,global_mode=v30_enriched_shares(m,http,admin,v14,app_id,partner_id,root_id)
     except Exception as e:
         # Omitted organizations must NEVER be treated as empty.
         if str(e) not in ('V14_SHARE_COLLECTION_OMITTED_UNVERIFIED',

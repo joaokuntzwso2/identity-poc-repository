@@ -12,7 +12,7 @@ from pathlib import Path
 TENANT='aurora.identity.test'
 APP_FP='7b4495d1ff5af7fd'
 PARTNER_FP='a9c40a10acabab52'
-SOURCE_SHA='7fd3d6ffeb069cc6eef43e98a4a67c3406a9ac4777965639c9c0e0c19daa4395'
+SOURCE_SHA='fea42472a4a91d4d04c368131ae4e569b5dc1aa8ce8eb5fe8040ccee344f6a53'
 JOURNAL='p2-aurora-partner-only-share-v17.private.json'
 FIELDS=('organizations','sharedApplications','sharingMode','links','totalResults',
         'isManagementApp','id','name','inboundProtocolConfiguration')
