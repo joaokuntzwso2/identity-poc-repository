@@ -4,15 +4,15 @@ import { readFile, lstat, open, rename } from 'node:fs/promises';
 import { dirname, resolve, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { GateError, insist, UUID, TENANT, PARTNER, makeTransport,
-  planPartner, createPartner, inventoryChild, disableChildUser } from './guarded-org.mjs';
+  planPartner, createPartner, inventoryChild, disableChildUser, inspectPartnerInventory } from './guarded-org.mjs';
 
-const COMMANDS = ['plan-partner', 'create-partner', 'child-users', 'disable-user'];
+const COMMANDS = ['inspect-partner-inventory', 'plan-partner', 'create-partner', 'child-users', 'disable-user'];
 const APPROVAL = Object.freeze({
   'create-partner': 'CREATE_AURORA_RETURNS_PARTNER',
   'disable-user': 'DISABLE_AURORA_PARTNER_USER'
 });
 const help = `P2.24 + P2.29 operator kit (no automatic mutations).
-Commands: plan-partner | create-partner | child-users | disable-user
+Commands: inspect-partner-inventory | plan-partner | create-partner | child-users | disable-user
 Required: P2_TOKEN_FILE=/absolute/path/mode0600 P2_ROOT_ORG_ID=uuid
   child-users/disable-user also need P2_CHILD_ORG_ID=uuid
   disable-user also needs P2_TARGET_USER_ID=uuid
@@ -101,7 +101,9 @@ export async function main(args = process.argv.slice(2)) {
   const call = makeTransport({ origin: process.env.P2_ORIGIN || 'https://localhost:9444', bearer: token });
   const rootId = requiredUUID('P2_ROOT_ORG_ID');
   let result;
-  if (command === 'plan-partner') {
+  if (command === 'inspect-partner-inventory') {
+    result = await inspectPartnerInventory(call, rootId);
+  } else if (command === 'plan-partner') {
     const r = await planPartner(call, rootId);
     result = { action:r.action, parentFingerprint:r.parentFingerprint,
       ...(r.organizationFingerprint ? {organizationFingerprint:r.organizationFingerprint} : {}) };

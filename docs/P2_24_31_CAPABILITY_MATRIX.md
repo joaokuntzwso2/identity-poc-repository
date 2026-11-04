@@ -48,3 +48,14 @@
 - Conditional authentication: https://is.docs.wso2.com/en/latest/guides/authentication/conditional-auth/configure-conditional-auth/
 - WSO2 passkey login: https://is.docs.wso2.com/en/latest/guides/authentication/passwordless-login/add-passwordless-login-with-passkey/
 - OAuth token-exchange gate: https://is.docs.wso2.com/en/latest/guides/authentication/configure-token-exchange/
+
+
+### P2.24 approved organization-view M2M bootstrap (increment)
+
+Source implementation: `scripts/p2/m2m_bootstrap.py`; non-interactive launcher: `scripts/p2/run-approved-orgview.sh`. Local mocked tests: `tests/p2/test_m2m_bootstrap.py` and `tests/p2/m2m-root-guard.test.mjs`. Status: **source-tested, WSO2 live application creation and token scope pending operator execution**. Only one new Aurora application and its `internal_org_organization_view` authorization are approved; all partner mutations remain unapproved.
+
+<!-- P2.24_V13_LIVE_ACCEPTANCE_PENDING -->
+- **P2.24 V13 partner provisioning**: source installed; runtime creation and negative acceptance pending. Once live-verified, startup performs authenticated GET-only rechecks and never blindly repeats POST.
+
+<!-- P2_24_V14_APP_SHARING_NOT_YET_AUTHORIZED -->
+- **P2.24 V14**: GET-only application-sharing inspection is integrated into startup; app sharing and partner business authorization remain **PENDING** until a specific partner business app and permissions are approved and live-verified.

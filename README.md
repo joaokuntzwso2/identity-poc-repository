@@ -3468,3 +3468,16 @@ No P2 capability has `VERIFIED_LIVE` status from this package author.
 Consent v2 requires **7.3.0.12+** and actor-aware delegation requires
 **7.3.0.18+**, with a separate approval-gated migration.
 <!-- CIAM_P2_24_31_SOURCE_PACKAGE_END -->
+
+
+## P2.24 — Aurora-only organization-view M2M bootstrap
+
+The dedicated non-interactive read-only organization M2M bootstrap is documented in `docs/P2_24_M2M_BOOTSTRAP.md`. Creating one narrowly scoped Aurora client is approved; live creation/authorization remains unverified until local WSO2 readback. No partner creation, Brisa/Carbon changes, or server updates are included.
+
+<!-- P2.24_V13_PARTNER_AUTOMATIC_BOOTSTRAP -->
+### P2.24 V13 — Aurora partner bootstrap
+The existing BFF startup now runs a guarded one-time Aurora child-organization bootstrap (or a readback-only verification on subsequent starts). See `docs/P2_24_PARTNER_BOOTSTRAP_V13.md`. It does not grant delegated admin rights, modify Brisa/Carbon, or activate update-gated P2 capabilities.
+
+<!-- P2_24_V14_PARTNER_SHARING_EVIDENCE -->
+### P2.24 V14 — Partner application sharing inspection
+BFF startup verifies the V13 partner then performs a **GET-only** Aurora app-sharing inspection. It does not grant shared access or authorize business requests. See `docs/P2_24_PARTNER_ACCESS_V14.md`.

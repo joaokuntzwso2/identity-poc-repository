@@ -7,6 +7,7 @@ import { random, fingerprint, discover, makeAuthorizationUrl, exchangeAuthorizat
 import { DemoSessionStore } from './session-store.js';
 import { endChannelSession } from './channel-logout.js';
 import { readAuthorizationResponse } from './auth-callback-guards.js';
+import { handlePartnerPortalAuth } from './partner-portal-route.js';
 import { appConfig, clients } from './config.js';
 import { inspectAccessToken, requireAuthorityForClient } from './wso2-authority.js';
 import { verifyAndRecordBinding } from './binding-acceptance.js';
@@ -348,6 +349,11 @@ async function handle(req, res) {
     const sector = /^\/oidc\/sector\/(aurora|brisa)\.json$/.exec(u.pathname);
     if (sector) return reply(res, 200,
       ['web','app'].map(channel => callbackUrl(`${sector[1]}-${channel}`)));
+    const partnerHandled=await handlePartnerPortalAuth({
+      req,res,u,s,origin:appConfig.origin,clients,
+      rotate:(session,response)=>sessionStore.rotate(session,response)
+    });
+    if (partnerHandled) return;
     const login = /^\/auth\/(aurora|brisa)-(web|mobile|app)\/login$/.exec(u.pathname);
     if (login) {
       const key = `${login[1]}-${login[2] === 'mobile' ? 'app' : login[2]}`;

@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @poc/experience-center",
-    "prestart:bff": "node scripts/prepare-business-ledgers.mjs",
+    "prestart:bff": "python3 scripts/p2/partner_v13.py ensure && python3 scripts/p2/partner_access_v14.py status && python3 scripts/p2/partner_business_plan_v15.py status && python3 scripts/p2/partner_portal_v16_3.py bootstrap && python3 scripts/p2/partner_share_v17_2.py bootstrap && python3 scripts/p2/partner_directory_v18.py bootstrap && node scripts/prepare-business-ledgers.mjs",
     "start:bff": "node scripts/ciam-live-start.mjs",
     "ciam:preflight": "node scripts/ciam-live-start.mjs --check",
     "ciam:smoke": "node scripts/ciam-live-smoke.mjs",

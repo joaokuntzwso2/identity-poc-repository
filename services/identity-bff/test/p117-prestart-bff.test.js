@@ -11,7 +11,7 @@ const packageFile=join(root,'package.json');
 function run(env){return spawnSync(process.execPath,[script],{env:{...process.env,...env},encoding:'utf8'});}
 test('npm start:bff has a prestart hook; ciam:preflight is unchanged',()=>{
   const scripts=JSON.parse(readFileSync(packageFile,'utf8')).scripts;
-  assert.equal(scripts['prestart:bff'],'node scripts/prepare-business-ledgers.mjs');
+  assert.equal(scripts['prestart:bff'],'python3 scripts/p2/partner_v13.py ensure && python3 scripts/p2/partner_access_v14.py status && python3 scripts/p2/partner_business_plan_v15.py status && python3 scripts/p2/partner_portal_v16_3.py bootstrap && python3 scripts/p2/partner_share_v17_2.py bootstrap && python3 scripts/p2/partner_directory_v18.py bootstrap && node scripts/prepare-business-ledgers.mjs');
   assert.equal(scripts['start:bff'],'node scripts/ciam-live-start.mjs');
   assert.equal(scripts['ciam:preflight'],'node scripts/ciam-live-start.mjs --check');
 });
