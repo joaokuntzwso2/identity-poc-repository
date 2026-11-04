@@ -3437,3 +3437,13 @@ an unattended production migration: approval and a backed-up maintenance window
 are still required for any actual cutover. If discovery fails because the deployed
 manifest uses an unsupported format, extend the adapter after inspecting the
 private manifest structure; never substitute a guessed issuer.
+
+<!-- P224_LIFECYCLE_README_V1 -->
+### Verde Logistics partner administration and lifecycle (P2.24 + P2.29)
+The lab-only portal at `http://127.0.0.1:4472/` is launched using
+`bash scripts/p224-lifecycle.sh serve`. It uses a short-lived local operator
+unlock, WSO2-issued delegated-user tokens for user read/create, and separately
+verified management authority for one business group and account deactivation.
+See `docs/CIAM_P224_P229_PARTNER_LIFECYCLE.md`. Offline tests are not live
+acceptance; group membership is not proof of downstream business authorization.
+<!-- /P224_LIFECYCLE_README_V1 -->

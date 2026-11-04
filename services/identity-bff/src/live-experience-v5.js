@@ -84,7 +84,7 @@
       <div class="nav-section"><div class="nav-label">MARCAS E CANAIS</div>
         ${menu('aurora','Aurora','brand')}${menu('brisa','Brisa','brand')}${menu('channels','Quatro clientes OIDC','brand')}</div>
       <div class="nav-section"><div class="nav-label">SEGURANÇA E EVIDÊNCIAS</div>
-        ${menu('security','Arquitetura e segurança','security')}${menu('evidence','Evidência técnica','evidence')}
+        ${menu('security','Arquitetura e segurança','security')}${menu('evidence','Evidência técnica','evidence')}<a class="nav-link" href="/security-evidence-p2" data-p2-inline aria-label="Centro de evidências P2">${icon('evidence')}<span>Centro de evidências P2</span></a>
         ${menu('identities','Identidades WSO2','user')}${menu('privacy','Privacidade e consentimento','privacy')}
         ${menu('b2b','Parceiros B2B','b2b')}${menu('delegation','Agentes e delegação','security')}</div>
       </nav><div class="sidebar-bottom"><span class="sidebar-avatar">IS</span><div><strong>WSO2 IS 7.3</strong><span>Sem persona fictícia</span></div></div>
@@ -372,4 +372,58 @@
   window.addEventListener('hashchange',()=>{if(!site){selected=location.hash.slice(1)||'home';if(!['home','journeys','channels','presenter','aurora','brisa','privacy','security','identities','evidence','b2b','delegation'].includes(selected))selected='home';labPage();}});
   if(!site){selected=location.hash.slice(1)||'home';if(!['home','journeys','channels','presenter','aurora','brisa','privacy','security','identities','evidence','b2b','delegation'].includes(selected)) selected='home';}
   reload().catch(err=>{root.innerHTML=`<main class="v5-error"><h1>Autoridade indisponível</h1><p>Sem fallback sintético. Verifique o WSO2 e o BFF.</p><a href="/lab">Tentar novamente</a></main>`;console.error('WSO2 live session unavailable',err.message);});
+})();
+
+/* P2_EVIDENCE_INLINE: read-only evidence rendered inside the current sidebar shell.
+ * The link retains its standalone href if the SPA content area is unavailable.
+ * All original API permissions and issuer checks remain at the BFF. */
+;(() => {
+  'use strict';
+  window.addEventListener('click', (event) => {
+    const link = event.target?.closest?.('a[data-p2-inline]');
+    if (!link) return;
+    const panel = document.getElementById('main-content');
+    if (!panel || !document.getElementById('lab-menu')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const host = document.createElement('div');
+    host.id = 'p2-inline-root';
+    host.className = 'p2-evidence-inline';
+    const loading = document.createElement('p');
+    loading.textContent = 'Carregando evidências WSO2…';
+    host.append(loading);
+    panel.replaceChildren(host);
+    document.querySelectorAll('#lab-menu .nav-link').forEach((item) => {
+      item.classList.remove('nav-active');
+    });
+    link.classList.add('nav-active');
+    const breadcrumb = document.querySelector('.breadcrumb');
+    if (breadcrumb) breadcrumb.textContent = 'Identity Experience Center / Centro de evidências P2';
+    const script = document.createElement('script');
+    script.src = '/p2-evidence.js';
+    script.onload = () => script.remove();
+    script.onerror = () => {
+      if (host.isConnected) host.textContent = 'Evidências indisponíveis: módulo não carregado.';
+      script.remove();
+    };
+    document.head.appendChild(script);
+  }, true);
+})();
+
+/* P224_LIFECYCLE_NAV_LINK_V1 - local-only partner journey, no API credentials. */
+;(() => {
+  if (typeof window === 'undefined' || window.location.pathname !== '/lab') return;
+  const add = () => {
+    if (document.getElementById('p224-lifecycle-entry')) return;
+    const a = document.createElement('a');
+    a.id = 'p224-lifecycle-entry';
+    a.href = 'http://127.0.0.1:4472/';
+    a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.className = 'v5-card';
+    a.textContent = 'Verde Logistics - Partner administration and lifecycle (local lab)';
+    a.setAttribute('aria-label','Open Verde Logistics local partner administration portal');
+    document.body.appendChild(a);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded',add,{once:true});
+  else add();
 })();

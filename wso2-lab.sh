@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# CIAM_P224_BOOTSTRAP_SUBCOMMAND_BEGIN
+# P2.24 bootstrap opt-in: existing launcher commands remain unchanged.
+if [ "${1:-}" = 'p2:bootstrap' ]; then
+  shift
+  exec bash "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/scripts/p2-bootstrap-auto.sh" "${1:-apply}"
+fi
+# CIAM_P224_BOOTSTRAP_SUBCOMMAND_END
 # BEGIN WSO2_LAB_AUTO_LOCAL_TLS (reviewable local-only trust helper)
 if [[ "${1-}" == 'bootstrap' || "${1-}" == 'tenants-only' ]]; then
   _wso2_lab_repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"

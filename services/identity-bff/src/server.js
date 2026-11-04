@@ -291,6 +291,8 @@ const STATIC = Object.freeze({
   '/portal/brisa/web': 'live-experience-v5.html',
   '/portal/brisa/mobile': 'live-experience-v5.html',
   '/live-experience-v5.js': 'live-experience-v5.js',
+  '/security-evidence-p2': 'p2-evidence.html',
+  '/p2-evidence.js': 'p2-evidence.js',
   '/live-premium-p120.js': 'live-premium-p120.js',
   '/live-premium-p120.css': 'live-premium-p120.css',
   '/live-experience-v5.css': 'live-experience-v5.css',

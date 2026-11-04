@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Verde Logistics | Partner Operations</title>
+<link rel="stylesheet" href="/p224-lifecycle.css">
+</head><body>
+<header><div class="brand">AURORA <span>PARTNER OPERATIONS</span></div><a href="http://127.0.0.1:4400/lab" rel="noopener">Experience Center</a></header>
+<main>
+<section class="hero"><div class="eyebrow">P2.24 / P2.29 · Verde Logistics</div><h1>Partner administration &amp; lifecycle</h1><p>Live WSO2 organization-scoped SCIM · Limited delegated operator · Separately approved lifecycle controls</p></section>
+<section id="login" class="panel"><h2>Local operator access</h2><p>Enter the temporary code printed by <code>bash scripts/p224-lifecycle.sh serve</code>. This is a local portal unlock, not a WSO2 password or OAuth token.</p><form id="login-form"><label>Operator code <input id="code" autocomplete="off" required minlength="12" type="password"></label><button>Unlock portal</button></form></section>
+<section id="dashboard" hidden>
+<div class="grid">
+<article class="panel"><div class="eyebrow">Security boundary</div><h2>Delegated actions</h2><p>List and create ordinary Verde users using WSO2-issued <strong>p2-verde-operator</strong> tokens.</p><p class="muted">Not authorized for parent, Brisa, role admin, or deactivation.</p></article>
+<article class="panel"><div class="eyebrow">Separate approval</div><h2>Owner-controlled actions</h2><p>Business-group membership and deactivation use bounded management authority. They are <strong>not</strong> claimed as delegated-user permissions.</p><p class="muted">Never assign members to <code>p2-partner-operations</code>.</p></article></div>
+<article class="panel"><h2>Current WSO2 readback</h2><div id="metrics" class="metrics"></div><p id="phase"></p><button id="refresh" class="secondary">Refresh live evidence</button><div id="users"></div></article>
+<article class="panel"><h2>Guided scenario</h2><p>Every write is journaled before WSO2 is called. Repeat requests reuse verified resources or stop on uncertain outcomes. Actions target only one disposable test user and one separate business group.</p>
+<div class="actions"><div><strong>1 · Partner onboarding</strong><p>Delegate creates one ordinary member; WSO2 detail readback required.</p><button data-action="create">Create or verify member</button></div>
+<div><strong>2 · Business group</strong><p>Owner creates a distinct non-admin group for the demo.</p><button data-action="group">Create or verify business group</button></div>
+<div><strong>3 · Business-group membership</strong><p>Owner grants membership in that one business group and verifies it (not yet downstream API authorization).</p><button data-action="add">Add membership</button></div>
+<div><strong>4 · Revoke business access</strong><p>Owner removes the membership and verifies absence.</p><button data-action="remove">Remove membership</button></div>
+<div><strong>5 · Deactivate</strong><p>Owner disables the same account. This requires WSO2's verified user-update scope. Future-token denial is a separate pending test.</p><button data-action="deactivate" class="danger">Deactivate lab account</button></div></div>
+</article>
+<article class="panel"><h2>Direct WSO2 evidence</h2><p class="muted">Only verified readbacks are recorded as successes. No simulated successes, no token material in the browser.</p><div id="evidence"></div></article>
+<article class="panel muted"><h2>Not yet accepted</h2><p>Browser-based authorization-code + PKCE for the partner operator, native session revocation, ordinary-user business-login evidence, and another verified partner's write denial are still pending. Current lab operator authentication uses the pre-existing password-grant application.</p></article>
+</section><output id="notice" role="status" aria-live="polite"></output>
+</main><script src="/p224-lifecycle.js" defer></script>
+</body></html>
