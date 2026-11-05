@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# BEGIN magalu-security-operator-dispatch
+case "${1:-}" in
+  security-inventory|security-plan|security-bootstrap|security-apply|security-verify|security-rollback)
+    exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/ciam-v10-security.sh" "$@"
+    ;;
+esac
+# END magalu-security-operator-dispatch
 set -euo pipefail
 REPO="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # P2.24 V13: one-time approved Aurora partner initialization.
