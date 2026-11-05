@@ -323,7 +323,7 @@ def source_fingerprint():
     files=[]
     for root in (EXT/'src',HERE/'policy',HERE/'scripts',HERE/'db'):
         files += [p for p in root.rglob('*') if p.is_file() and '__pycache__' not in str(p)]
-    files += [HERE/'application_sequences.py', HERE/'governance.py', HERE/'bootstrap.py', HERE/'credential_store.py', HERE/'trusted_tls.py', HERE/'management_oauth.py', EXT/'build-extension.sh']
+    files += [HERE/'application_sequences.py', HERE/'governance.py', HERE/'bootstrap.py', HERE/'credential_store.py', HERE/'trusted_tls.py', HERE/'management_oauth.py', EXT/'build-extension.sh', HERE/'graal_upgrade.py', HERE/'graal_host_upgrade.py']
     return sha(''.join(str(p.relative_to(REPO))+':'+sha(p.read_bytes())+'\n' for p in sorted(files)))
 
 
@@ -335,21 +335,55 @@ def plan(p,rt,write=True):
     return data,digest
 
 
+def pg_runtime_admin(rt):
+    """Read the configured PG administrator from the pinned running v10 DB.
+
+    Do not guess postgres, print the container environment, use passwords, or
+    allow an attacker-provided username in a SQL or shell expression.
+    """
+    import re
+    raw = json.loads(run(['docker', 'inspect', rt['pg_id']]))
+    if not isinstance(raw, list) or len(raw) != 1:
+        raise GuardError('expected one running PostgreSQL container')
+    info = raw[0]
+    if not info.get('State', {}).get('Running'):
+        raise GuardError('v10 PostgreSQL container is not running')
+    env = info.get('Config', {}).get('Env')
+    if not isinstance(env, list):
+        raise GuardError('configured PostgreSQL environment unavailable')
+    matches = [v.partition('=')[2] for v in env
+               if isinstance(v, str) and v.startswith('POSTGRES_USER=')]
+    if len(matches) != 1 or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,62}', matches[0]):
+        raise GuardError('missing, ambiguous or unsafe configured PostgreSQL administrator')
+    return matches[0]
+
+
+def pg_require_superuser(rt):
+    """Read-only privilege test before first Magalu role/database DDL."""
+    user = pg_runtime_admin(rt)
+    statement = 'SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper;'
+    out = run(['docker','exec','-u','postgres',rt['pg_id'],'psql',
+               '-X','-w','-At','-U',user,'-d','postgres','-c',statement]).strip()
+    if out != '1':
+        raise GuardError('configured PostgreSQL administrator lacks superuser privileges')
+
+
 def db_exec(rt,sql,database='postgres'):
     # Existing Postgres image starts with local postgres OS user. A differing
     # runtime must be explicitly adapted and reviewed; never use WSO2 database.
     run(['docker','exec','-i','-u','postgres',rt['pg_id'],'psql','-v','ON_ERROR_STOP=1',
-         '-U','postgres','-d',database],input=sql)
+         '-U',pg_runtime_admin(rt),'-d',database],input=sql)
 
 
 def db_setup(rt,password):
+    pg_require_superuser(rt)
     if not password or len(password)<30: raise GuardError('risk password too weak')
     escape=password.replace("'","''")
     role="SELECT 1 FROM pg_roles WHERE rolname='magalu_risk';"
-    exists=run(['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U','postgres','-d','postgres','-c',role]).strip()
+    exists=run(['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U',pg_runtime_admin(rt),'-d','postgres','-c',role]).strip()
     if not exists:
         db_exec(rt,"CREATE ROLE magalu_risk LOGIN PASSWORD '"+escape+"';")
-    dbexists=run(['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U','postgres','-d','postgres',
+    dbexists=run(['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U',pg_runtime_admin(rt),'-d','postgres',
                   '-c',"SELECT 1 FROM pg_database WHERE datname='ciam_risk';"]).strip()
     if not dbexists:
         db_exec(rt,'CREATE DATABASE ciam_risk OWNER magalu_risk;')
@@ -433,6 +467,15 @@ def build_from_running_ga(rt):
         dest=source/'repository/components'; dest.mkdir(parents=True)
         for folder in ('plugins','lib'):
             run(['docker','cp',rt['is_id']+':'+str(base/folder),str(dest/folder)])
+        sdk=run(['docker','exec',rt['is_id'],'sh','-ec',
+                 'set -- "$1"/repository/components/dropins/graal-sdk-*.jar; '
+                 '[ "$#" -eq 1 ] && [ -f "$1" ] && '
+                 '{ printf "%s" "$1"; exit 0; }; exit 2',
+                 'graal-sdk-discovery', rt['carbon_home']]).strip()
+        require(sdk.startswith(rt['carbon_home']+'/repository/components/dropins/graal-sdk-')
+                and '\n' not in sdk, 'missing/ambiguous GA Graal SDK')
+        dropins=dest/'dropins'; dropins.mkdir()
+        run(['docker','cp',rt['is_id']+':'+sdk,str(dropins/pathlib.PurePosixPath(sdk).name)])
         env=os.environ.copy()
         env['WSO2_HOME']=str(source)
         env['WSO2_GA_IMAGE_DIGEST']=rt['image_id']
@@ -512,25 +555,165 @@ def do_plan():
     print(json.dumps({'evidence':'MANAGEMENT_READBACK_PLAN_ONLY','approval_sha256':digest,'plan':data},indent=2))
 
 
-def grant_container_read(p,rt,env_path):
-    """Prepare group-read access to protected staged TOML from the exact WSO2 UID.
+def grant_container_read(p, rt, env_path):
+    """Set restrictive group-read permissions BEFORE creating the read-only mount.
 
-    Uses one-shot root container of the existing GA service; no guessed host UID,
-    no world-readable deployment.toml, no manual file copy.
+    Uses the exact already-pinned local GA image, an isolated one-shot container,
+    and a writable bind only to the separately staged private copy. Never
+    writes the original WSO2 deployment.toml or restarts the WSO2 service.
     """
-    gid=run(['docker','exec',rt['is_id'],'id','-g']).strip()
-    if not gid.isdecimal():raise GuardError('cannot determine existing WSO2 runtime group')
-    cf=rt['carbon_home']+'/repository/conf/deployment.toml'
-    cmd=compose_cmd(p,'--env-file',str(env_path),'run','--rm','--no-deps',
-                    '--user','0:0','--entrypoint','/bin/sh',rt['wso2_service'],
-                    '-ec','chgrp '+gid+' '+shlex.quote(cf)+' && chmod 640 '+shlex.quote(cf),with_overlay=True)
-    run(cmd)
+    staged = p / 'private/magalu-risk/deployment.toml'
+    if not staged.is_file() or staged.is_symlink():
+        raise GuardError('staged Magalu deployment.toml missing or symlinked')
+    expected = (p / 'private/magalu-risk').resolve()
+    if staged.resolve().parent != expected:
+        raise GuardError('staged configuration escapes private directory')
+    if ',' in str(staged):
+        raise GuardError('unusable mount source path')
+    gid = run(['docker', 'exec', rt['is_id'], 'id', '-g']).strip()
+    if not gid.isdecimal():
+        raise GuardError('cannot establish WSO2 runtime group')
+    mount = 'type=bind,source=' + str(staged) + ',target=/tmp/magalu-risk-deployment.toml'
+    run(['docker', 'run', '--rm', '--network', 'none', '--user', '0:0',
+         '--entrypoint', '/bin/sh', '--mount', mount, rt['image_id'],
+         '-ec', 'chgrp ' + gid + ' /tmp/magalu-risk-deployment.toml && '
+                'chmod 640 /tmp/magalu-risk-deployment.toml'])
+    if staged.stat().st_mode & 0o007:
+        raise GuardError('staged config has world-access permissions')
+
+def compose_runtime_env(rt):
+    """Retain base Compose PostgreSQL interpolation while using risk --env-file.
+
+    Compose --env-file for Magalu replaces automatic lookup of the base .env.
+    Read the *already running, pinned* PostgreSQL container's configured
+    POSTGRES_PASSWORD, passing it only through the child process environment.
+    No password values are displayed, logged, serialized, or persisted.
+    """
+    info = json.loads(run(['docker','inspect',rt['pg_id']]))
+    if not isinstance(info,list) or len(info)!=1 or not info[0].get('State',{}).get('Running'):
+        raise GuardError('running pinned PostgreSQL container is unavailable')
+    raw = info[0].get('Config',{}).get('Env')
+    if not isinstance(raw,list):
+        raise GuardError('PostgreSQL runtime environment unavailable')
+    values=[entry.partition('=')[2] for entry in raw
+            if isinstance(entry,str) and entry.startswith('POSTGRES_PASSWORD=')]
+    if len(values)!=1 or not values[0] or '\n' in values[0] or '\r' in values[0]:
+        raise GuardError('configured PostgreSQL password unavailable; no secret guessed')
+    env=os.environ.copy()
+    env['POSTGRES_PASSWORD']=values[0]
+    return env
+
+
+def compose_activation_seen(container_id, since_epoch):
+    """Check Docker stdout and stderr channels without printing log content."""
+    r=subprocess.run(['docker','logs','--since',str(since_epoch),container_id],
+                     text=True,capture_output=True,check=False,timeout=30)
+    if r.returncode:
+        raise GuardError('cannot inspect WSO2 activation logs')
+    return 'MAGALU_RISK_ACTIVE' in (r.stdout or '') or            'MAGALU_RISK_ACTIVE' in (r.stderr or '')
+
+
+def resume_staged(p, rt, approve):
+    """Resume ONLY the journaled, post-DB/pre-Compose Magalu apply stage.
+
+    This will not rebuild, create credentials, rerun DDL, recreate tenants,
+    or permit changed application sequences or tenant governance.
+    """
+    journal_path=p/'private/magalu-risk-apply.json'
+    saved_path=p/'private/magalu-risk-plan.json'
+    journal=json.loads(journal_path.read_text())
+    saved=json.loads(saved_path.read_text())
+    if journal.get('phase') != 'risk-store-and-runtime-staged':
+        raise GuardError('cannot resume: journal is not at exact staged phase')
+    if not isinstance(approve,str) or len(approve)!=64 or \
+       journal.get('plan_sha256')!=approve or saved.get('digest')!=approve:
+        raise GuardError('cannot resume: explicit approval/journal/saved plan differ')
+    if journal.get('image_id')!=rt['image_id']:
+        raise GuardError('cannot resume: WSO2 image drift')
+    bundle=EXT/'target/magalu-wso2-risk-osgi.jar'
+    if not bundle.is_file() or sha(bundle.read_bytes())!=journal.get('jar_sha256'):
+        raise GuardError('cannot resume: built GA OSGi bundle differs from journal')
+    if not (p/'compose.magalu-risk.yaml').is_file():
+        raise GuardError('cannot resume: staged Compose overlay missing')
+    staged=p/'private/magalu-risk/deployment.toml'
+    if not staged.is_file() or staged.is_symlink() or staged.stat().st_mode & 0o007:
+        raise GuardError('cannot resume: staged WSO2 configuration missing or world-readable')
+    env_path,_=envfile(p,False)
+    data=saved.get('plan')
+    if not isinstance(data,dict) or data.get('image_id')!=rt['image_id']:
+        raise GuardError('cannot resume: stored plan/image mismatch')
+
+    # Catch ALL missing base Compose variables before changing a container.
+    run(compose_cmd(p,'--env-file',str(env_path),'config','--quiet',with_overlay=True),
+        env=compose_runtime_env(rt))
+
+    expected={(x['tenant'],x['name']):x for x in data.get('app_changes',[])}
+    current=apps()
+    if len(expected)!=4 or set(expected)!=set(current):
+        raise GuardError('cannot resume: unexpected application inventory')
+    originals=journal.get('app_sequence_before')
+    if not isinstance(originals,dict) or len(originals)!=4:
+        raise GuardError('cannot resume: application rollback snapshots incomplete')
+    proposed=proposed_sequences(current)
+    for (tenant,name),app in current.items():
+        change=expected[(tenant,name)]
+        label=tenant+'/'+name
+        if app.get('id')!=change.get('id') or label not in originals:
+            raise GuardError('cannot resume: application identity drift')
+        if fingerprint(app['authenticationSequence'])!=change['before'] or \
+           fingerprint(originals[label])!=change['before']:
+            raise GuardError('cannot resume: application sequence drift')
+        if fingerprint(proposed[(tenant,name)])!=change['after']:
+            raise GuardError('cannot resume: proposed risk script drift')
+    for tenant in BRANDS:
+        if governance.discovered(tenant,request)!=data['native_governance'][tenant]:
+            raise GuardError('cannot resume: native login governance drift')
+
+    # Read-only schema presence check, using the configured DB administrator.
+    sql="SELECT CASE WHEN to_regclass('magalu_risk.events') IS NOT NULL THEN 'yes' ELSE 'no' END;"
+    result=run(['docker','exec','-u','postgres',rt['pg_id'],'psql','-X','-w','-At',
+                '-U',pg_runtime_admin(rt),'-d',DB_NAME,'-c',sql]).strip()
+    if result!='yes':
+        raise GuardError('cannot resume: risk schema has not been initialized')
+
+    print('MAGALU_RESUME_PREFLIGHT_PASS',flush=True)
+    cmd=compose_cmd(p,'--env-file',str(env_path),'up','-d','--no-deps',
+                    rt['wso2_service'],'magalu-risk-retention',with_overlay=True)
+    run(cmd,env=compose_runtime_env(rt))
+    print('MAGALU_RESUME_COMPOSE_UP_OK',flush=True)
+
+    # Require fresh activation evidence since the recorded apply began.
+    activation=False
+    for _ in range(24):
+        ids=run(compose_cmd(p,'ps','-q',rt['wso2_service'])).strip().splitlines()
+        if len(ids)==1:
+            if compose_activation_seen(ids[0], journal['applied_at_epoch']):
+                activation=True
+                break
+        time.sleep(2)
+    if not activation:
+        raise GuardError('risk Java activation absent; login sequences intentionally untouched')
+    print('MAGALU_RESUME_OSGI_ACTIVE',flush=True)
+
+    # Do not attempt auth-flow mutations until real GA function activation.
+    for tenant in BRANDS:
+        governance.apply(tenant,request,lambda t,path,body: request(t,path,'PATCH',body),
+                         data['native_governance'][tenant])
+    update_apps(current,proposed)
+    journal['phase']='app-sequences-patched-unverified-live'
+    atomic_write(journal_path,json.dumps(journal,indent=2)+'\n')
+    checks=verify_console(apps())
+    if not all(row['basic_and_totp'] for row in checks):
+        raise GuardError('Console sequence GET readback failed after resume')
+    print(json.dumps({'evidence':'MANAGEMENT_READBACK_NO_LIVE_LOGIN',
+                      'resumed':True,'console':checks,
+                      'live_wso2_token_tests':'NOT_EXECUTED'},indent=2))
 
 
 def do_apply(approve):
     p=home();rt=runtime(p)
     journal=p/'private/magalu-risk-apply.json'
-    if journal.exists(): raise GuardError('previous apply journal exists; use verify, never blindly re-apply')
+    if journal.exists(): return resume_staged(p, rt, approve)
     saved=json.loads((p/'private/magalu-risk-plan.json').read_text())
     data,digest=plan(p,rt,write=False)
     if digest!=saved.get('digest') or digest!=approve:
@@ -550,9 +733,9 @@ def do_apply(approve):
     jar_sha=build_from_running_ga(rt)
     env_path,_=envfile(p,True)
     _,secrets_data=envfile(p,False)
-    db_setup(rt,secrets_data['MAGALU_RISK_PASSWORD'])
     stage=make_overlay(p,rt)
     grant_container_read(p,rt,env_path)
+    db_setup(rt,secrets_data['MAGALU_RISK_PASSWORD'])
     journal_data={'plan_sha256':digest,'jar_sha256':jar_sha,'image_id':rt['image_id'],
                   'applied_at_epoch':int(time.time()),'phase':'risk-store-and-runtime-staged',
                   'app_sequence_before':{tenant+'/'+name:app['authenticationSequence']
@@ -560,14 +743,13 @@ def do_apply(approve):
     atomic_write(journal,json.dumps(journal_data,indent=2)+'\n')
     # Compose overlay installs artifact, private policy, config and retention together.
     cmd=compose_cmd(p,'--env-file',str(env_path),'up','-d','--no-deps',rt['wso2_service'],'magalu-risk-retention',with_overlay=True)
-    run(cmd)
+    run(cmd, env=compose_runtime_env(rt))
     # Restart is expected because app dynamic function must be registered before script PATCH.
     activation_ok=False
     for _ in range(24):
         ids=run(compose_cmd(p,'ps','-q',rt['wso2_service'])).strip().splitlines()
         if len(ids)==1:
-            logs=run(['docker','logs','--since',str(journal_data['applied_at_epoch']),ids[0]])
-            if 'MAGALU_RISK_ACTIVE' in logs:
+            if compose_activation_seen(ids[0], journal_data['applied_at_epoch']):
                 activation_ok=True
                 break
         time.sleep(2)
@@ -599,14 +781,13 @@ def activation_readback(p,rt,j):
     mounted={x['Destination'] for x in current.get('Mounts',[])}
     if not expected.issubset(mounted):
         raise GuardError('risk bundle/config/policies not mounted in current WSO2 service')
-    logs=run(['docker','logs','--since',str(j['applied_at_epoch']),rt['is_id']])
-    activated='MAGALU_RISK_ACTIVE' in logs
+    activated=compose_activation_seen(rt['is_id'], j['applied_at_epoch'])
     if not activated: raise GuardError('no OSGi service activation marker since recorded apply')
-    cmd=['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U','postgres',
+    cmd=['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U',pg_runtime_admin(rt),
          '-d',DB_NAME,'-c',"SELECT CASE WHEN to_regclass('magalu_risk.events') IS NOT NULL THEN 'yes' ELSE 'no' END;"]
     if run(cmd).strip()!='yes':raise GuardError('shared risk PostgreSQL schema missing')
     env_path,_=envfile(p,False)
-    ids=run(compose_cmd(p,'--env-file',str(env_path),'ps','-q','magalu-risk-retention',with_overlay=True)).strip().splitlines()
+    ids=run(compose_cmd(p,'--env-file',str(env_path),'ps','-q','magalu-risk-retention',with_overlay=True), env=compose_runtime_env(rt)).strip().splitlines()
     if len(ids)!=1 or not json.loads(run(['docker','inspect',ids[0]]))[0]['State']['Running']:
         raise GuardError('risk-state expiry service is not running')
     return {'osgi_activation_marker':activated,'risk_db_schema':DB_SCHEMA+'.events',
@@ -620,9 +801,40 @@ def do_verify():
     if j['phase']=='rolled-back': raise GuardError('risk deployment was rolled back')
     if j['image_id']!=rt['image_id']:raise GuardError('image drift')
     jar=EXT/'target/magalu-wso2-risk-osgi.jar'
-    if not jar.is_file() or sha(jar.read_bytes())!=j['jar_sha256']:
+    upgrade_file=p/'private/magalu-risk/graal-upgrade.json'
+    expected_bundle_sha=j['jar_sha256']
+    if upgrade_file.exists():
+        if upgrade_file.is_symlink(): raise GuardError('bundle upgrade receipt symlink refused')
+        upgrade=json.loads(upgrade_file.read_text())
+        if (upgrade.get('phase')!='verified-config'
+                or upgrade.get('base_plan_sha256')!=j['plan_sha256']
+                or upgrade.get('base_jar_sha256')!=j['jar_sha256']
+                or upgrade.get('image_id')!=j['image_id']):
+            raise GuardError('bundle upgrade receipt incomplete or inconsistent')
+        expected_bundle_sha=upgrade['new_jar_sha256']
+    host_upgrade_file=p/'private/magalu-risk/graal-host-upgrade.json'
+    if host_upgrade_file.exists() or host_upgrade_file.is_symlink():
+        if host_upgrade_file.is_symlink():
+            raise GuardError('second upgrade receipt symlink refused')
+        if not upgrade_file.is_file() or upgrade_file.is_symlink():
+            raise GuardError('first upgrade receipt missing or unsafe')
+        host_receipt=json.loads(host_upgrade_file.read_text())
+        if (host_receipt.get('phase')!='verified-config'
+                or host_receipt.get('base_plan_sha256')!=j['plan_sha256']
+                or host_receipt.get('base_jar_sha256')!=expected_bundle_sha
+                or host_receipt.get('first_receipt_sha256')!=sha(upgrade_file.read_bytes())
+                or host_receipt.get('image_id')!=j['image_id']
+                or host_receipt.get('new_java_sha256')!=sha((EXT/'src/main/java/com/magalu/wso2/risk/Wso2RiskComponent.java').read_bytes())
+                or host_receipt.get('new_build_sha256')!=sha((EXT/'build-extension.sh').read_bytes())):
+            raise GuardError('second upgrade receipt incomplete or inconsistent')
+        expected_bundle_sha=host_receipt['new_jar_sha256']
+    if not jar.is_file() or sha(jar.read_bytes())!=expected_bundle_sha:
         raise GuardError('local built bundle hash mismatch')
     activated=activation_readback(p,rt,j)
+    if upgrade_file.exists():
+        from graal_upgrade import current_activation
+        active_now,_=current_activation(rt["is_id"])
+        if not active_now: raise GuardError("no risk activation since current WSO2 start")
     marks=verify_console(apps())
     native={t:{k:v["value"] for k,v in governance.discovered(t,request).items()} for t in BRANDS}
     governance_ok=all(native[t]==governance.DESIRED[t] for t in BRANDS)
@@ -676,7 +888,7 @@ def do_rollback(approve):
         for api,props in sorted(grouped.items()):
             request(tenant,api,'PATCH',{'operation':'UPDATE','properties':props})
     env_path,_=envfile(p,False)
-    run(compose_cmd(p,'--env-file',str(env_path),'stop','magalu-risk-retention',with_overlay=True))
+    run(compose_cmd(p,'--env-file',str(env_path),'stop','magalu-risk-retention',with_overlay=True), env=compose_runtime_env(rt))
     run(compose_cmd(p,'up','-d','--no-deps',rt['wso2_service']))
     j['phase']='rolled-back'
     atomic_write(path,json.dumps(j,indent=2)+'\n')
@@ -686,7 +898,7 @@ def do_rollback(approve):
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('command',choices=['inventory','plan','apply','verify','rollback','auth-check'])
+    ap.add_argument('command',choices=['inventory','plan','apply','verify','rollback','auth-check','upgrade-graal','upgrade-host'])
     ap.add_argument('--approve',default=None,help='SHA-256 printed by security-plan')
     a=ap.parse_args()
     try:
@@ -695,6 +907,22 @@ def main():
         elif a.command=='plan': do_plan()
         elif a.command=='apply': do_apply(require(a.approve,'--approve <plan sha256> required'))
         elif a.command=='rollback': do_rollback(require(a.approve,'--approve <original plan sha256> required'))
+        elif a.command=='upgrade-graal':
+            from graal_upgrade import upgrade_bundle
+            try:
+                upgrade_bundle(sys.modules[__name__], require(a.approve,'--approve <original plan sha256> required'))
+            except (GuardError, RuntimeError) as exc:
+                raise GuardError('GRAAL_UPGRADE_FAILED: ' + str(exc)) from None
+            except Exception as exc:
+                raise GuardError('GRAAL_UPGRADE_FAILED: ' + type(exc).__name__) from None
+        elif a.command=='upgrade-host':
+            from graal_host_upgrade import upgrade_host_bundle
+            try:
+                upgrade_host_bundle(sys.modules[__name__], require(a.approve,'--approve <original plan sha256> required'))
+            except (GuardError, RuntimeError) as exc:
+                raise GuardError('HOST_UPGRADE_FAILED: ' + str(exc)) from None
+            except Exception as exc:
+                raise GuardError('HOST_UPGRADE_FAILED: ' + type(exc).__name__) from None
         else: do_verify()
     except (GuardError,UnsafeSequence,OSError,ValueError,subprocess.TimeoutExpired) as ex:
         print('SECURITY_BOOTSTRAP_BLOCKED:',str(ex),file=sys.stderr)

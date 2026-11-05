@@ -1,6 +1,9 @@
 package com.magalu.wso2.risk;
 
 import org.osgi.framework.ServiceRegistration;
+import org.graalvm.polyglot.HostAccess;
+import org.graalvm.polyglot.Value;
+import org.graalvm.polyglot.proxy.ProxyExecutable;
 import org.osgi.service.component.ComponentContext;
 import org.wso2.carbon.identity.application.authentication.framework.JsFunctionRegistry;
 import org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js.JsAuthenticationContext;
@@ -50,8 +53,8 @@ public final class Wso2RiskComponent {
         }
         audit=new AsyncAuditSink(Path.of(mandatory("MAGALU_RISK_SPOOL_PATH")),2048);
         service=new RiskService(store,policies,audit);
-        registry.register(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER,"magaluRiskCheck",
-                (Wso2RiskFunction) this::check);
+        registry.register(JsFunctionRegistry.Subsystem.SEQUENCE_HANDLER,
+                "magaluRiskCheck", new HostRiskFunction(this));
         eventRegistration=ctx.getBundleContext().registerService(AbstractEventHandler.class.getName(),
                 new Wso2RiskEvents(network,this::eventSignal),null);
         System.out.println("MAGALU_RISK_ACTIVE tenants=aurora,brisa engine=GA-7.3 policy=external");
@@ -61,6 +64,40 @@ public final class Wso2RiskComponent {
         if(eventRegistration!=null)eventRegistration.unregister();
         if(audit!=null)audit.close();
         if(store!=null)store.close();
+    }
+    // WSO2 IS 7.3 GraalJS requires an executable guest-language proxy.
+    // Reject invalid interop arguments; never default to ALLOW.
+    private Object checkGraal(Value... args) {
+        try {
+            if (args == null || args.length != 2 || args[0] == null || args[1] == null
+                    || !args[0].isProxyObject() || !args[1].isString()) {
+                return "DENY";
+            }
+            Object proxy = args[0].asProxyObject();
+            if (!(proxy instanceof JsAuthenticationContext)) {
+                return "DENY";
+            }
+            return check((JsAuthenticationContext) proxy, args[1].asString());
+        } catch (RuntimeException ex) {
+            return "DENY";
+        }
+    }
+    // MAGALU_HOST_CALLABLE_V2: WSO2 persistCurrentContext excludes host functions.
+    // A named @Export class is executable with WSO2's HostAccess.EXPLICIT policy.
+    // Unlike ProxyExecutable, this is a host object and will not be serialized
+    // as a guest JavaScript callback without a source location.
+    public static final class HostRiskFunction implements Wso2RiskFunction {
+        private final Wso2RiskComponent owner;
+
+        public HostRiskFunction(Wso2RiskComponent owner) {
+            this.owner = owner;
+        }
+
+        @Override
+        @HostAccess.Export
+        public String magaluRiskCheck(JsAuthenticationContext context, String verifiedUsername) {
+            return owner.check(context, verifiedUsername);
+        }
     }
     private String check(JsAuthenticationContext context,String verifiedUsername) {
         try {
