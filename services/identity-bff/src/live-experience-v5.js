@@ -162,16 +162,16 @@
   function sitePage(){
     const x=site, c=me?.clients?.[x.key], signed=c?.authenticated===true;
     const name=x.brand==='aurora'?'AURORA':'brisa.', mobile=x.channel==='mobile';
-    // A web channel is a regular first-party page. The decorative phone frame
-    // contains the SAME live BFF storefront DOM (no iframe or separate session).
-    // On narrow viewports CSS removes the decoration and the content goes edge-to-edge.
-    const frameOpen = mobile ? '' : `<div class="v5-retail-stage v5-retail-stage--${x.brand}" data-testid="live-retail-stage">
-      <div class="v5-retail-stage-context"><a href="/lab">← Experience Center</a><span>WSO2 IS 7.3 · CANAL WEB</span>
-      <h1>${x.brand==='aurora'?'Aurora':'Brisa'} Web</h1><p>Loja real conectada ao BFF. A autenticação continua no WSO2.</p></div>
+    // Phone-style shell is ONLY for the separate MOBILE OIDC channel.
+    // The WEB channel retains its original markup and layout byte-for-byte.
+    // No iframe, authentication changes, or synthetic account information.
+    const frameOpen = mobile ? `<div class="v5-retail-stage v5-retail-stage--${x.brand}" data-testid="live-retail-stage">
+      <div class="v5-retail-stage-context"><a href="/lab">← Experience Center</a><span>WSO2 IS 7.3 · CANAL MOBILE</span>
+      <h1>${x.brand==='aurora'?'Aurora':'Brisa'} Mobile</h1><p>Canal mobile real conectado ao BFF, com cliente OIDC próprio e autenticação WSO2.</p></div>
       <div class="v5-retail-device" data-testid="live-retail-device"><div class="v5-retail-device-top" aria-hidden="true"><span></span></div>
-      <div class="v5-retail-screen" data-testid="live-retail-screen">`;
-    const frameClose = mobile ? '' : `</div><div class="v5-retail-device-bottom" aria-hidden="true"><span></span></div></div>
-      <p class="v5-retail-stage-note">Prévia responsiva do canal web · Aurora e Brisa mantêm sessões e tenants separados.</p></div>`;
+      <div class="v5-retail-screen" data-testid="live-retail-screen">` : '';
+    const frameClose = mobile ? `</div><div class="v5-retail-device-bottom" aria-hidden="true"><span></span></div></div>
+      <p class="v5-retail-stage-note">Experiência mobile real · Clientes OIDC, sessões e tenants permanecem separados.</p></div>` : '';
     root.innerHTML=`${frameOpen}<div class="retail-site retail-${x.brand} ${mobile?'v5-mobile-site':''}"><a class="v5-skip-link" href="#branded-main">Pular para o conteúdo</a>
       <div class="rt-demo-banner"><strong>DEMONSTRAÇÃO COM IDENTIDADE REAL</strong><span>Catálogo ilustrativo · Sem pedidos ou pagamentos fictícios</span><a href="/lab">Voltar ao Experience Center →</a></div>
       <div class="rt-service-strip"><span>WSO2 Identity Server 7.3 · ${x.brand.toUpperCase()} TENANT</span><span>${mobile?'Navegador mobile · Cliente OIDC próprio':'Navegador web · Cliente OIDC próprio'}</span></div>

@@ -3317,8 +3317,8 @@ a {
 @media(max-width:640px){.v5-lab-signin-links{grid-template-columns:1fr}.v5-lab-signin{padding:16px}.v5-header-login{width:100%;max-width:none}}
 
 
-/* P2_RETAIL_RESPONSIVE_V49: first-party mobile-like external area for WEB channels.
- * No iframe, spoofed identity, auth changes or scroll-locking on mobile screens. */
+/* P2_RETAIL_MOBILE_ONLY_V51: responsive external phone stage for MOBILE channels only.
+ * WEB channels retain original markup and CSS; no iframe or OIDC/WSO2 changes. */
 .v5-retail-stage {
   --frame-accent:#208b93;
   min-height:100dvh;
@@ -3344,7 +3344,7 @@ a {
 .v5-retail-device-bottom>span { width:100px; height:4px; background:#7b858c; border-radius:10px; }
 .v5-retail-screen { width:100%; min-width:0; height:min(780px,calc(100dvh - 165px)); min-height:430px; overflow-x:hidden; overflow-y:auto;
   overscroll-behavior:contain; background:#fff; scrollbar-width:thin; scroll-behavior:smooth; }
-.v5-retail-stage .retail-site { min-height:100%; width:100%; min-width:0; max-width:100%; font-size:14px; overflow-wrap:anywhere; }
+.v5-retail-stage .retail-site { min-height:100%; width:100%; min-width:0; max-width:100%; font-size:14px; overflow-wrap:anywhere; box-shadow:none; }
 .v5-retail-stage .retail-site * { min-width:0; }
 .v5-retail-stage .rt-demo-banner { padding:8px 10px; display:flex; gap:5px 10px; flex-wrap:wrap; font-size:10px; line-height:1.4; }
 .v5-retail-stage .rt-demo-banner strong { white-space:normal; }
@@ -3414,3 +3414,21 @@ a {
   .v5-retail-stage .v5-product .v5-product-art { height:95px; }
 }
 @media(prefers-reduced-motion:reduce) { .v5-retail-screen { scroll-behavior:auto; } }
+
+/* Scoped mobile refinements; untouched web storefront rules. */
+.v5-retail-stage .v5-skip-link:not(:focus-visible) { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.v5-retail-stage .v5-skip-link:focus-visible { position:fixed; top:10px; left:10px; z-index:1000; padding:8px 12px; background:white; color:#1b4855; border-radius:8px; }
+.v5-retail-stage .rt-demo-banner { padding:6px 10px; line-height:1.3; }
+.v5-retail-stage .rt-demo-banner span { font-size:10px; }
+.v5-retail-stage .rt-header-inner { padding-top:9px; padding-bottom:6px; }
+.v5-retail-stage .rt-primary-nav { padding:2px 0 5px; }
+.v5-retail-stage .v5-identity-strip { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; justify-content:stretch; gap:6px 9px; padding:9px 13px 11px; }
+.v5-retail-stage .v5-identity-strip #site-identity { min-width:0; overflow-wrap:anywhere; font-size:12px; line-height:1.3; }
+.v5-retail-stage .v5-identity-strip #site-issuer { grid-column:1/-1; width:100%; max-width:100%; font-size:10px; }
+.v5-retail-stage .v5-identity-strip #site-issuer:empty { display:none; }
+.v5-retail-stage .v5-strip-login { min-height:32px; padding:7px 9px; width:auto; font-size:10px; justify-self:end; }
+.v5-retail-stage .v5-identity-strip button { min-height:30px; padding:5px 9px; font-size:10px; }
+.v5-retail-stage .v5-identity-strip button[data-action="reload"] { grid-column:1; justify-self:start; }
+.v5-retail-stage .v5-identity-strip button[data-action="logout"] { grid-column:2; justify-self:end; }
+.v5-retail-stage .rt-hero-copy { padding-top:24px; padding-bottom:28px; }
+.v5-retail-stage .rt-hero-copy h1 { margin-top:12px; }
