@@ -1,0 +1,111 @@
+import sys
+import pathlib
+import unittest
+from unittest.mock import patch
+from urllib.parse import urlsplit, parse_qs
+
+HERE = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(HERE))
+import bootstrap as b
+
+
+class ApplicationLookupTest(unittest.TestCase):
+    def test_four_exact_filtered_matches_and_direct_id_readback(self):
+        calls = []
+
+        def fake_request(tenant, path, method='GET', body=None):
+            self.assertEqual(method, 'GET')
+            self.assertIsNone(body)
+            calls.append((tenant, path))
+            if '?' in path:
+                q = parse_qs(urlsplit(path).query)
+                self.assertEqual(q['limit'], ['50'])
+                self.assertEqual(q['offset'], ['0'])
+                name = q['filter'][0].removeprefix('name eq ')
+                return {'applications': [{'id': f'id-{tenant}-{name}', 'name': name}],
+                        'totalResults': 1}
+            app_id = path.rsplit('/', 1)[1]
+            return {'id': app_id, 'name': app_id.split('-')[-2] + '-' + app_id.split('-')[-1],
+                    'authenticationSequence': {'steps': []}}
+
+        with patch.object(b, 'request', side_effect=fake_request):
+            result = b.apps()
+        self.assertEqual(len(result), 4)
+        self.assertEqual(len(calls), 8)
+        self.assertEqual(set(result), {(t, n) for t, names in b.BRANDS.items() for n in names})
+
+    def test_second_page_when_filter_ignored(self):
+        count = 0
+        def fake_request(tenant, path, method='GET', body=None):
+            nonlocal count
+            count += 1
+            query = parse_qs(urlsplit(path).query)
+            name = 'aurora-web'
+            if 'filter' in query:
+                return {'applications': [], 'totalResults': 0}
+            offset = int(query['offset'][0])
+            if offset == 0:
+                return {'applications': [
+                    {'id': f'other-{i}', 'name': f'other-{i}'} for i in range(50)
+                ], 'totalResults': 51}
+            return {'applications': [{'id': 'existing-web-id', 'name': name}], 'totalResults': 51}
+
+        with patch.object(b, 'request', side_effect=fake_request):
+            matches = b._application_matches('aurora.identity.test', 'aurora-web', filtered=False)
+        self.assertEqual(matches, [('existing-web-id', 'aurora-web')])
+        self.assertEqual(count, 2)
+
+    def test_duplicate_names_are_rejected_across_pages(self):
+        def fake_request(tenant, path, method='GET', body=None):
+            offset = int(parse_qs(urlsplit(path).query)['offset'][0])
+            if offset == 0:
+                return {'applications': [{'id': 'target-1', 'name': 'aurora-web'}] + [
+                    {'id': f'other-{i}', 'name': 'different'} for i in range(49)
+                ], 'totalResults': 51}
+            return {'applications': [{'id': 'target-2', 'name': 'aurora-web'}],
+                    'totalResults': 51}
+        with patch.object(b, 'request', side_effect=fake_request):
+            with self.assertRaisesRegex(b.GuardError, 'duplicate existing application'):
+                b._application_matches('aurora.identity.test', 'aurora-web', filtered=True)
+
+    def test_repeated_page_rejected(self):
+        def fake_request(tenant, path, method='GET', body=None):
+            return {'applications': [{'id': f'id-{i}', 'name': 'other'} for i in range(50)],
+                    'totalResults': 100}
+        with patch.object(b, 'request', side_effect=fake_request):
+            with self.assertRaisesRegex(b.GuardError, 'repeated id'):
+                b._application_matches('aurora.identity.test', 'aurora-web', filtered=False)
+
+    def test_unknown_response_not_treated_as_absent(self):
+        with patch.object(b, 'request', return_value={'items': []}):
+            with self.assertRaisesRegex(b.GuardError, 'response contract unknown'):
+                b._application_matches('aurora.identity.test', 'aurora-web', filtered=True)
+
+    def test_cross_tenant_denied_before_request(self):
+        with patch.object(b, 'request') as request:
+            for t, n in [('carbon.super','aurora-web'),
+                         ('aurora.identity.test','brisa-app')]:
+                with self.assertRaises(b.GuardError):
+                    b._application_matches(t, n, filtered=True)
+            request.assert_not_called()
+
+    def test_large_catalog_stops(self):
+        with patch.object(b, 'request', return_value={
+            'applications': [{'id': f'id-{i}', 'name': 'other'} for i in range(50)],
+            'totalResults': 1_001}):
+            with self.assertRaisesRegex(b.GuardError, 'exceeds safe search bound'):
+                b._application_matches('aurora.identity.test', 'aurora-web', filtered=False)
+
+    def test_detail_identity_drift_fails_closed(self):
+        def fake_request(tenant, path, method='GET', body=None):
+            if '?' in path:
+                name = parse_qs(urlsplit(path).query)['filter'][0].removeprefix('name eq ')
+                return {'applications': [{'id': 'existing-id', 'name': name}], 'totalResults': 1}
+            return {'id': 'existing-id', 'name': 'untrusted-app'}
+        with patch.object(b, 'request', side_effect=fake_request):
+            with self.assertRaisesRegex(b.GuardError, 'identity changed'):
+                b.apps()
+
+
+if __name__ == '__main__':
+    unittest.main()

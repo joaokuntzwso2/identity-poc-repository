@@ -1,0 +1,703 @@
+#!/usr/bin/env python3
+"""Magalu risk deployment stage for *existing* CIAM v10; no Console writes.
+
+Commands:
+  inventory: non-mutating public/local/runtime checks
+  plan:      read-only app inventory and exact-change hash
+  apply:     guard-approved atomic file staging, risk database, WSO2 restart,
+             app policy PATCH and GET-readback
+  verify:    check bundle evidence, apps/policy/activation without changing state
+
+This stage never creates tenants/clients or replays v10 fresh/bootstrap.
+Requires Docker/WSO2 management credentials from the existing private operator
+credential store exported as environment variables; it does not guess journal keys.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import copy
+import hashlib
+import hmac
+import json
+import os
+import pathlib
+import secrets
+import shlex
+import ssl
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+HERE = pathlib.Path(__file__).resolve().parent
+REPO = HERE.parents[2]
+EXT = REPO / 'extensions/magalu-wso2-risk'
+sys.path.insert(0, str(HERE))
+from application_sequences import compose, fingerprint, read_brisa_script, UnsafeSequence
+import governance
+
+BRANDS = {'aurora.identity.test': ('aurora-web', 'aurora-app'),
+          'brisa.identity.test': ('brisa-web', 'brisa-app')}
+EXPECTED_IMAGE = 'wso2/wso2is:7.3.0'
+EXPECTED_BIND_PORT = '9444'
+DB_NAME = 'ciam_risk'
+DB_USER = 'magalu_risk'
+DB_SCHEMA = 'magalu_risk'
+
+
+class GuardError(RuntimeError):
+    pass
+
+
+def require(value, error):
+    if not value: raise GuardError(error)
+    return value
+
+
+def sha(data):
+    if isinstance(data, str): data = data.encode()
+    return hashlib.sha256(data).hexdigest()
+
+
+def atomic_write(path, data, mode=0o600):
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = path.with_name(path.name + '.tmp-' + secrets.token_hex(6))
+    try:
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data if isinstance(data, bytes) else data.encode())
+            f.flush(); os.fsync(f.fileno())
+        os.replace(tmp, path)
+        os.chmod(path, mode)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def run(args, *, input=None, capture=True, env=None):
+    r = subprocess.run(args, input=input, text=True, capture_output=capture,
+                       check=False, env=env, timeout=150)
+    if r.returncode:
+        # Do not echo stderr/stdout because they may include credentials.
+        raise GuardError(f'command failed: {args[0]} {args[1] if len(args)>1 else ""} (rc={r.returncode})')
+    return r.stdout if capture else ''
+
+
+def home():
+    p = pathlib.Path(os.environ.get('CIAM_V10_HOME', str(pathlib.Path.home() / 'wso2-ciam-v10'))).expanduser().resolve()
+    if not p.is_dir(): raise GuardError(f'v10 private HOME not found: {p}')
+    if not (p / 'compose.identity.yaml').is_file(): raise GuardError('v10 generated compose.identity.yaml missing')
+    if not (p / 'private/deployment.toml').is_file(): raise GuardError('private v10 deployment.toml missing')
+    return p
+
+
+def compose_files(p):
+    return [p / n for n in ('compose.yaml', 'compose.identity.yaml')]
+
+
+def compose_cmd(p, *extra, with_overlay=False):
+    cmd=['docker','compose']
+    for f in compose_files(p):
+        require(f.is_file(), f'compose file missing {f}')
+        cmd += ['-f', str(f)]
+    if with_overlay: cmd += ['-f', str(p / 'compose.magalu-risk.yaml')]
+    return cmd + list(extra)
+
+
+def valid_v10_ports(ports):
+    """Allow only the inspected loopback 9444:9444 GA binding, never the 9443 lab."""
+    if not isinstance(ports, list) or len(ports) != 1:
+        return False
+    p = ports[0]
+    if not isinstance(p, dict):
+        return False
+    return (str(p.get('published')) == '9444'
+            and str(p.get('target')) == '9444'
+            and p.get('host_ip') == '127.0.0.1'
+            and p.get('protocol', 'tcp') == 'tcp')
+
+
+def runtime(p):
+    """Read-only local Docker inventory, image/port/service checks."""
+    data=json.loads(run(compose_cmd(p,'config','--format','json')))
+    services=data.get('services', {})
+    matches=[(k,v) for k,v in services.items() if str(v.get('image','')).startswith('wso2/wso2is:')]
+    if len(matches)!=1 or matches[0][1].get('image')!=EXPECTED_IMAGE:
+        raise GuardError('not the unique pinned WSO2 v10 GA service; reject Update18/9443')
+    service, setting = matches[0]
+    ports=setting.get('ports', [])
+    if not valid_v10_ports(ports):
+        raise GuardError('expected v10 loopback published 127.0.0.1:9444 -> internal 9444; refuse 9443 lab')
+    ps=[(k,v) for k,v in services.items() if 'postgres:' in str(v.get('image',''))]
+    if len(ps)!=1: raise GuardError('cannot uniquely discover existing v10 PostgreSQL service')
+    pg_service=ps[0][0]
+    ids=run(compose_cmd(p,'ps','-q',service)).strip().splitlines()
+    if len(ids)!=1: raise GuardError('existing WSO2 container not running')
+    info=json.loads(run(['docker','inspect',ids[0]]))[0]
+    if not info['State']['Running']: raise GuardError('WSO2 service not running')
+    # Compare the resolved Compose mapping with the running container, too.
+    # A stale Compose file is not proof of the actual externally exposed port.
+    bound=info.get('NetworkSettings', {}).get('Ports', {})
+    actual=bound.get('9444/tcp') or []
+    if (len(actual) != 1
+            or actual[0].get('HostIp') != '127.0.0.1'
+            or str(actual[0].get('HostPort')) != '9444'
+            or any(str(b.get('HostPort')) == '9443'
+                   for mappings in bound.values() for b in (mappings or []))):
+        raise GuardError('running WSO2 port bindings do not match loopback-only v10 9444')
+    image_id=info['Image']
+    if not image_id.startswith('sha256:'): raise GuardError('Docker image ID is not content pinned')
+    # Inspect the *actual* runtime path; no guessed container path is accepted.
+    paths=run(['docker','exec',ids[0],'sh','-ec',
+               'for d in "$CARBON_HOME" "$WSO2_SERVER_HOME" /home/wso2carbon/wso2is-7.3.0; do '
+               '[ -n "$d" ] && [ -f "$d/repository/conf/deployment.toml" ] && '
+               ' { printf "%s" "$d"; exit 0; }; done; exit 2']).strip()
+    if not paths or not paths.startswith('/') or '..' in paths:
+        raise GuardError('exact GA home not discoverable')
+    path=pathlib.PurePosixPath(paths)
+    run(['docker','exec',ids[0], 'test', '-f', str(path/'repository/conf/deployment.toml')])
+    pg_ids=run(compose_cmd(p,'ps','-q',pg_service)).strip().splitlines()
+    if len(pg_ids)!=1: raise GuardError('existing v10 PostgreSQL container not running')
+    return dict(wso2_service=service, postgres_service=pg_service, is_id=ids[0],
+                pg_id=pg_ids[0], image_id=image_id, carbon_home=str(path), home=str(p))
+
+
+def admin(tenant):
+    # Credential resolution stays inside the operator's existing private v10 home.
+    # Never print username/password, journal contents, or encoded Basic header.
+    from credential_store import CredentialError, resolve_tenant_owner
+    try:
+        username, password = resolve_tenant_owner(home(), tenant)
+    except CredentialError as exc:
+        raise GuardError(str(exc)) from None
+    return base64.b64encode((username+':'+password).encode()).decode()
+
+
+def request(tenant, path, method='GET', body=None):
+    # Use the v10 tenant M2M client, not 401-rejected tenant-owner Basic auth.
+    # All scopes are explicitly requested and validated before use.
+    if tenant not in BRANDS:
+        raise GuardError('unsupported tenant')
+    from management_oauth import OAuthBlocked, management_request
+    from trusted_tls import trusted_context, TlsBootstrapError
+    try:
+        ctx = trusted_context(home(), runtime)
+        return management_request(home(), tenant, path, method, body, context=ctx)
+    except (OAuthBlocked, TlsBootstrapError) as ex:
+        raise GuardError('management OAuth blocked: ' + tenant + ' ' + method + ' ' +
+                         path.split('?')[0] + ' (' + str(ex) + ')') from None
+
+
+# Existing CIAM-v10 OIDC journal is the authority for the four application IDs.
+# API list searching by internal channel key is incorrect: production display
+# names are "Identity Lab v10 ...", not "aurora-web", etc.
+_APP_JOURNAL = 'bootstrap-oidc-v10.private.json'
+_DISPLAY_NAMES = {
+    ('aurora.identity.test', 'aurora-web'): 'Identity Lab v10 Aurora Web',
+    ('aurora.identity.test', 'aurora-app'): 'Identity Lab v10 Aurora Mobile Browser Preview',
+    ('brisa.identity.test', 'brisa-web'): 'Identity Lab v10 Brisa Web',
+    ('brisa.identity.test', 'brisa-app'): 'Identity Lab v10 Brisa Mobile Browser Preview',
+}
+
+
+def _existing_oidc_clients(v10_home):
+    """Load owner-bound application records via existing no-follow, 0600 reader.
+
+    Neither search results nor untrusted application names are used to select
+    an application for modification. Exact tenant/channel/display-name identity
+    and an unambiguous UUID from the original journal are mandatory.
+    """
+    import uuid
+    from credential_store import _secure_load, CredentialError
+
+    try:
+        state = _secure_load(v10_home / 'private' / _APP_JOURNAL)
+    except CredentialError:
+        raise GuardError('OIDC_JOURNAL_UNSAFE_OR_INVALID') from None
+    if not isinstance(state, dict) or not isinstance(state.get('tenants'), dict):
+        raise GuardError('OIDC_JOURNAL_UNAVAILABLE')
+    root_tenants = state['tenants']
+    if set(root_tenants) != {'aurora', 'brisa'}:
+        raise GuardError('OIDC_JOURNAL_TENANTS_DRIFTED')
+    records = {}
+    seen_ids = set()
+    seen_clients = set()
+    for tenant, aliases in BRANDS.items():
+        brand = tenant.split('.', 1)[0]
+        node = root_tenants.get(brand)
+        if not isinstance(node, dict) or not isinstance(node.get('clients'), dict):
+            raise GuardError('OIDC_JOURNAL_CLIENTS_MISSING_' + brand)
+        if node.get('domain') != tenant:
+            raise GuardError('OIDC_JOURNAL_DOMAIN_DRIFT_' + brand)
+        clients = node['clients']
+        if set(clients) != {'web', 'app'}:
+            raise GuardError('OIDC_JOURNAL_CHANNELS_DRIFT_' + brand)
+        for alias in aliases:
+            channel = alias.rsplit('-', 1)[-1]
+            record = clients.get(channel)
+            if not isinstance(record, dict):
+                raise GuardError('OIDC_JOURNAL_CHANNEL_RECORD_INVALID')
+            expected_name = _DISPLAY_NAMES[(tenant, alias)]
+            if (record.get('name') != expected_name
+                    or record.get('domain') != tenant
+                    or record.get('channel') != channel):
+                raise GuardError('OIDC_JOURNAL_APPLICATION_IDENTITY_DRIFT_' + brand)
+            app_id, client_id = record.get('id'), record.get('clientId')
+            if not isinstance(app_id, str):
+                raise GuardError('OIDC_JOURNAL_APPLICATION_ID_MISSING')
+            try:
+                if str(uuid.UUID(app_id)) != app_id.lower() or len(app_id) != 36:
+                    raise ValueError('noncanonical UUID')
+            except ValueError:
+                raise GuardError('OIDC_JOURNAL_APPLICATION_ID_INVALID') from None
+            if not (isinstance(client_id, str) and 1 <= len(client_id) <= 512):
+                raise GuardError('OIDC_JOURNAL_CLIENT_ID_INVALID')
+            if app_id in seen_ids or (tenant, client_id) in seen_clients:
+                raise GuardError('OIDC_JOURNAL_DUPLICATE_IDENTITY')
+            seen_ids.add(app_id)
+            seen_clients.add((tenant, client_id))
+            records[(tenant, alias)] = {'id': app_id, 'clientId': client_id, 'name': expected_name}
+    if len(records) != 4:
+        raise GuardError('OIDC_JOURNAL_FOUR_APPLICATIONS_REQUIRED')
+    return records
+
+
+def apps():
+    """Read the exact four journal-owned applications, never search/adopt/create.
+
+    The OIDC inbound readback binds a WSO2 application UUID to its OAuth client
+    ID, preventing an accidental patch to an unrelated application with the same
+    display name. Missing permission or incompatible response shape fails closed.
+    """
+    records = _existing_oidc_clients(home())
+    found = {}
+    for (tenant, alias), record in records.items():
+        path = '/api/server/v1/applications/' + record['id']
+        detail = request(tenant, path)
+        if (not isinstance(detail, dict)
+                or detail.get('id') != record['id']
+                or detail.get('name') != record['name']
+                or not isinstance(detail.get('authenticationSequence'), dict)):
+            raise GuardError('OIDC_LIVE_APPLICATION_IDENTITY_MISMATCH_' + tenant.split('.')[0])
+        inbound = request(tenant, path + '/inbound-protocols/oidc')
+        if not isinstance(inbound, dict) or inbound.get('clientId') != record['clientId']:
+            raise GuardError('OIDC_LIVE_CLIENT_ID_MISMATCH_' + tenant.split('.')[0])
+        found[(tenant, alias)] = detail
+    if len(found) != 4:
+        raise GuardError('OIDC_LIVE_FOUR_APPLICATIONS_REQUIRED')
+    return found
+
+
+def proposed_sequences(discovered):
+    script=read_brisa_script(HERE)
+    return {(tenant,name): compose(tenant,name,app,script)
+            for (tenant,name),app in discovered.items()}
+
+
+def plan_data(p,rt,discovered):
+    new=proposed_sequences(discovered)
+    entries=[]
+    for key,old in sorted(discovered.items()):
+        tenant,name=key
+        entries.append(dict(tenant=tenant, name=name, display_name=old['name'], id=old['id'],
+                            before=fingerprint(old['authenticationSequence']),
+                            after=fingerprint(new[key]),
+                            effect='sequence-only, never credentials/clients/scopes'))
+    native={t:governance.discovered(t,request) for t in BRANDS}
+    return dict(format=1, native_governance={t:{k:{"value":v["value"],"path":v["path"]} for k,v in val.items()} for t,val in native.items()},
+                native_lock_target=governance.DESIRED, repo_assessed='identity-poc-repository (source-only overlay)',
+                image=EXPECTED_IMAGE, image_id=rt['image_id'],
+                service=rt['wso2_service'], pg_service=rt['postgres_service'],
+                package_sha256=source_fingerprint(), app_changes=entries,
+                bundle_build='requires exact pinned GA binary compilation',
+                risk_database=DB_NAME, risk_schema=DB_SCHEMA,
+                console_paths=['Applications > <brand-web|app> > Login Flow',
+                               'Login & Registration > Login Security > Login Attempts'])
+
+
+def source_fingerprint():
+    files=[]
+    for root in (EXT/'src',HERE/'policy',HERE/'scripts',HERE/'db'):
+        files += [p for p in root.rglob('*') if p.is_file() and '__pycache__' not in str(p)]
+    files += [HERE/'application_sequences.py', HERE/'governance.py', HERE/'bootstrap.py', HERE/'credential_store.py', HERE/'trusted_tls.py', HERE/'management_oauth.py', EXT/'build-extension.sh']
+    return sha(''.join(str(p.relative_to(REPO))+':'+sha(p.read_bytes())+'\n' for p in sorted(files)))
+
+
+def plan(p,rt,write=True):
+    data=plan_data(p,rt,apps())
+    digest=sha(json.dumps(data,sort_keys=True,separators=(',',':')))
+    if write:
+        atomic_write(p/'private/magalu-risk-plan.json',json.dumps({'digest':digest,'plan':data},indent=2)+'\n')
+    return data,digest
+
+
+def db_exec(rt,sql,database='postgres'):
+    # Existing Postgres image starts with local postgres OS user. A differing
+    # runtime must be explicitly adapted and reviewed; never use WSO2 database.
+    run(['docker','exec','-i','-u','postgres',rt['pg_id'],'psql','-v','ON_ERROR_STOP=1',
+         '-U','postgres','-d',database],input=sql)
+
+
+def db_setup(rt,password):
+    if not password or len(password)<30: raise GuardError('risk password too weak')
+    escape=password.replace("'","''")
+    role="SELECT 1 FROM pg_roles WHERE rolname='magalu_risk';"
+    exists=run(['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U','postgres','-d','postgres','-c',role]).strip()
+    if not exists:
+        db_exec(rt,"CREATE ROLE magalu_risk LOGIN PASSWORD '"+escape+"';")
+    dbexists=run(['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U','postgres','-d','postgres',
+                  '-c',"SELECT 1 FROM pg_database WHERE datname='ciam_risk';"]).strip()
+    if not dbexists:
+        db_exec(rt,'CREATE DATABASE ciam_risk OWNER magalu_risk;')
+    # Scoped migration; do not execute DDL against a WSO2-owned database.
+    schema=(HERE/'db/001-risk.sql').read_text()
+    db_exec(rt,'SET ROLE magalu_risk;\n'+schema,database=DB_NAME)
+
+
+def make_overlay(p,rt):
+    # Only non-WSO2-owned files are staged into bind mounts. The existing
+    # deployment.toml is copied into a separate private file and never replaced.
+    import yaml
+    target=p/'private/magalu-risk'
+    target.mkdir(parents=True,exist_ok=True,mode=0o700)
+    policy_dir=target/'policy'; policy_dir.mkdir(exist_ok=True,mode=0o755)
+    os.chmod(policy_dir,0o755)
+    for name in ('aurora','brisa'):
+        atomic_write(policy_dir/(name+'.properties'), (HERE/'policy'/(name+'.properties')).read_bytes(),mode=0o644)
+    raw=(p/'private/deployment.toml').read_text()
+    frag=(HERE/'deployment.toml.fragment').read_text()
+    if 'name = "magaluRiskEventHandler"' in raw:
+        raise GuardError('risk event handler already in original WSO2 config; refuse ambiguous second registration')
+    atomic_write(target/'deployment.toml',raw.rstrip()+'\n\n'+frag+'\n')
+    bundle=EXT/'target/magalu-wso2-risk-osgi.jar'
+    if not bundle.is_file(): raise GuardError('GA compiled OSGi JAR missing')
+    carbon=rt['carbon_home']
+    jdbc=f'jdbc:postgresql://{rt["postgres_service"]}:5432/{DB_NAME}?connectTimeout=1&socketTimeout=1&tcpKeepAlive=true'
+    db_env=dict(MAGALU_RISK_JDBC_URL=jdbc,MAGALU_RISK_JDBC_USER=DB_USER,
+                MAGALU_RISK_JDBC_PASSWORD='${MAGALU_RISK_PASSWORD:?required}',
+                MAGALU_RISK_HMAC_BASE64='${MAGALU_RISK_HMAC_BASE64:?required}',
+                MAGALU_RISK_POLICY_DIR='/opt/magalu-risk/policy',
+                MAGALU_RISK_SPOOL_PATH=carbon+'/repository/logs/magalu-risk-events.jsonl',
+                MAGALU_TRUSTED_PROXY_CIDRS='${MAGALU_TRUSTED_PROXY_CIDRS:-}')
+    svc={'environment':db_env, 'volumes':[
+        f'{bundle}:{carbon}/repository/components/dropins/magalu-wso2-risk-osgi.jar:ro',
+        f'{target}/deployment.toml:{carbon}/repository/conf/deployment.toml:ro',
+        f'{policy_dir}:/opt/magalu-risk/policy:ro']}
+    cleanup={
+        'image':'postgres:16.6','restart':'unless-stopped',
+        'depends_on':[rt['postgres_service']],
+        'environment':{'PGPASSWORD':'${MAGALU_RISK_PASSWORD:?required}'},
+        'entrypoint':['/bin/sh','-ec',
+            'while :; do psql -h '+rt['postgres_service']+' -U '+DB_USER+' -d '+DB_NAME+
+            ' -v ON_ERROR_STOP=1 -c "DELETE FROM magalu_risk.events WHERE id IN '+
+            '(SELECT id FROM magalu_risk.events WHERE event_ms < (extract(epoch from now())*1000)::bigint - 3888000000 LIMIT 2000)"; sleep 1800; done']}
+    ov={'services':{rt['wso2_service']:svc,'magalu-risk-retention':cleanup}}
+    # Validate generated YAML fully before exposing it to docker compose.
+    rendered=yaml.safe_dump(ov,sort_keys=False)
+    if yaml.safe_load(rendered)!=ov: raise GuardError('rendered compose overlay cannot be round-tripped')
+    atomic_write(p/'compose.magalu-risk.yaml',rendered)
+    return target
+
+
+def envfile(p,create):
+    path=p/'private/magalu-risk/secrets.env'
+    if create and not path.exists():
+        # Seed is ephemeral until the first guarded apply; stable afterwards.
+        passphrase=secrets.token_urlsafe(38)
+        key=base64.b64encode(secrets.token_bytes(32)).decode()
+        # Never print or commit; docker compose substitution uses --env-file.
+        atomic_write(path,'MAGALU_RISK_PASSWORD='+passphrase+'\nMAGALU_RISK_HMAC_BASE64='+key+'\n'
+                        'MAGALU_TRUSTED_PROXY_CIDRS=\n')
+    if not path.is_file(): raise GuardError('risk secrets.env absent')
+    if path.stat().st_mode & 0o077: raise GuardError('risk secrets.env permissions must be 0600')
+    values={}
+    for line in path.read_text().splitlines():
+        if '=' in line:
+            k,v=line.split('=',1);values[k]=v
+    if not values.get('MAGALU_RISK_PASSWORD') or not values.get('MAGALU_RISK_HMAC_BASE64'):
+        raise GuardError('malformed private risk credentials')
+    return path,values
+
+
+def build_from_running_ga(rt):
+    # Extract exact container bundles for binary compilation; no Maven repository
+    # guesses, no need to copy JARs manually. Never read/print application secrets.
+    (EXT/'target').mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='magalu-ga-',dir=str(EXT/'target')) as temp:
+        source=pathlib.Path(temp)
+        base=pathlib.PurePosixPath(rt['carbon_home'])/'repository/components'
+        dest=source/'repository/components'; dest.mkdir(parents=True)
+        for folder in ('plugins','lib'):
+            run(['docker','cp',rt['is_id']+':'+str(base/folder),str(dest/folder)])
+        env=os.environ.copy()
+        env['WSO2_HOME']=str(source)
+        env['WSO2_GA_IMAGE_DIGEST']=rt['image_id']
+        run(['bash',str(EXT/'build-extension.sh')],env=env)
+    jar=EXT/'target/magalu-wso2-risk-osgi.jar'
+    if not jar.is_file():raise GuardError('bundle not produced')
+    return sha(jar.read_bytes())
+
+
+def update_apps(discovered,proposed):
+    for (tenant,name),old in sorted(discovered.items()):
+        id=old['id']
+        # Check direct GET immediately before mutation. Do NOT assume ETag.
+        path='/api/server/v1/applications/'+urllib.parse.quote(id,safe='')
+        fresh=request(tenant,path)
+        if fingerprint(fresh)!=fingerprint(old):
+            raise GuardError('application changed after plan; stop without overwriting')
+        request(tenant,path,'PATCH',{'authenticationSequence':proposed[(tenant,name)]})
+        checked=request(tenant,path)
+        if fingerprint(checked.get('authenticationSequence'))!=fingerprint(proposed[(tenant,name)]):
+            raise GuardError('auth sequence readback differs; stop immediately')
+
+
+def verify_console(discovered):
+    status=[]
+    for (tenant,name),app in sorted(discovered.items()):
+        s=app.get('authenticationSequence') or {}
+        auths=[op.get('authenticator','') for step in s.get('steps',[]) for op in step.get('options',[])]
+        script=s.get('script') or ''
+        ok=('magaluRiskCheck' in script and len(s.get('steps',[]))>=2
+            and 'totp' in auths and bool({'basic','BasicAuthenticator'} & set(auths)))
+        status.append(dict(tenant=tenant,app=name,display_name=app.get('name',name),script_marker='magaluRiskCheck' in script,
+                           basic_and_totp=ok,console='Applications > '+app.get('name',name)+' > Login Flow'))
+    return status
+
+
+def do_auth_check():
+    # Fully non-mutating remote management check; OAuth tokens stay in memory.
+    # No username/password variants, invalid login retries, or privilege grants.
+    p = home()
+    rt = runtime(p)
+    result = {'evidence': 'LIVE_MANAGEMENT_READ_ONLY', 'image_id': rt['image_id'], 'tenants': {}}
+    for tenant in BRANDS:
+        item = {}
+        for key, path in (
+            ('application_view', '/api/server/v1/applications?limit=1'),
+            ('governance_view', '/api/server/v1/identity-governance'),
+        ):
+            try:
+                request(tenant, path)
+                item[key] = 'HTTP_200'
+            except GuardError as exc:
+                text = str(exc)
+                import re
+                match = re.search(r'\(([A-Z0-9_]+)\)\s*$', text)
+                code = match.group(1) if match else 'BLOCKED'
+                item[key] = code
+        result['tenants'][tenant] = item
+    result['ready_for_plan'] = all(
+        entry['application_view'] == 'HTTP_200' and entry['governance_view'] == 'HTTP_200'
+        for entry in result['tenants'].values())
+    print(json.dumps(result, indent=2))
+    if not result['ready_for_plan']:
+        raise GuardError('at least one tenant M2M client lacks management read permission')
+
+
+def do_inventory():
+    p=home(); rt=runtime(p)
+    print(json.dumps({'evidence':'LOCAL_RUNTIME_READ_ONLY','image':EXPECTED_IMAGE,
+                      'image_id':rt['image_id'],'service':rt['wso2_service'],
+                      'postgres_service':rt['postgres_service'],
+                      'carbon_home':rt['carbon_home'],'repo':str(REPO)},indent=2))
+
+
+def do_plan():
+    p=home(); rt=runtime(p); data,digest=plan(p,rt)
+    print(json.dumps({'evidence':'MANAGEMENT_READBACK_PLAN_ONLY','approval_sha256':digest,'plan':data},indent=2))
+
+
+def grant_container_read(p,rt,env_path):
+    """Prepare group-read access to protected staged TOML from the exact WSO2 UID.
+
+    Uses one-shot root container of the existing GA service; no guessed host UID,
+    no world-readable deployment.toml, no manual file copy.
+    """
+    gid=run(['docker','exec',rt['is_id'],'id','-g']).strip()
+    if not gid.isdecimal():raise GuardError('cannot determine existing WSO2 runtime group')
+    cf=rt['carbon_home']+'/repository/conf/deployment.toml'
+    cmd=compose_cmd(p,'--env-file',str(env_path),'run','--rm','--no-deps',
+                    '--user','0:0','--entrypoint','/bin/sh',rt['wso2_service'],
+                    '-ec','chgrp '+gid+' '+shlex.quote(cf)+' && chmod 640 '+shlex.quote(cf),with_overlay=True)
+    run(cmd)
+
+
+def do_apply(approve):
+    p=home();rt=runtime(p)
+    journal=p/'private/magalu-risk-apply.json'
+    if journal.exists(): raise GuardError('previous apply journal exists; use verify, never blindly re-apply')
+    saved=json.loads((p/'private/magalu-risk-plan.json').read_text())
+    data,digest=plan(p,rt,write=False)
+    if digest!=saved.get('digest') or digest!=approve:
+        raise GuardError('explicit approved plan SHA does not match fresh WSO2 readback')
+    discovered=apps(); proposed=proposed_sequences(discovered)
+    # Build and validate exact shipped class/API dependencies before ANY runtime write.
+    # Fail before any runtime write if existing tenant M2M clients cannot
+    # obtain and prove the exact application/governance write scopes.
+    from management_oauth import OAuthBlocked, preflight_write_scopes
+    from trusted_tls import trusted_context
+    ctx = trusted_context(p, runtime)
+    try:
+        for tenant in BRANDS:
+            preflight_write_scopes(p, tenant, ctx)
+    except OAuthBlocked as ex:
+        raise GuardError('M2M_WRITE_CAPABILITY_BLOCKED (' + str(ex) + ')') from None
+    jar_sha=build_from_running_ga(rt)
+    env_path,_=envfile(p,True)
+    _,secrets_data=envfile(p,False)
+    db_setup(rt,secrets_data['MAGALU_RISK_PASSWORD'])
+    stage=make_overlay(p,rt)
+    grant_container_read(p,rt,env_path)
+    journal_data={'plan_sha256':digest,'jar_sha256':jar_sha,'image_id':rt['image_id'],
+                  'applied_at_epoch':int(time.time()),'phase':'risk-store-and-runtime-staged',
+                  'app_sequence_before':{tenant+'/'+name:app['authenticationSequence']
+                                         for (tenant,name),app in discovered.items()}}
+    atomic_write(journal,json.dumps(journal_data,indent=2)+'\n')
+    # Compose overlay installs artifact, private policy, config and retention together.
+    cmd=compose_cmd(p,'--env-file',str(env_path),'up','-d','--no-deps',rt['wso2_service'],'magalu-risk-retention',with_overlay=True)
+    run(cmd)
+    # Restart is expected because app dynamic function must be registered before script PATCH.
+    activation_ok=False
+    for _ in range(24):
+        ids=run(compose_cmd(p,'ps','-q',rt['wso2_service'])).strip().splitlines()
+        if len(ids)==1:
+            logs=run(['docker','logs','--since',str(journal_data['applied_at_epoch']),ids[0]])
+            if 'MAGALU_RISK_ACTIVE' in logs:
+                activation_ok=True
+                break
+        time.sleep(2)
+    if not activation_ok:
+        raise GuardError('bundle activation marker absent; app flows intentionally left unchanged')
+    # First complete the native tenant governance stage; stop on catalog drift.
+    for tenant in BRANDS:
+        governance.apply(tenant,request,lambda t,path,body: request(t,path,"PATCH",body),
+                         data["native_governance"][tenant])
+    update_apps(discovered,proposed)
+    journal_data['phase']='app-sequences-patched-unverified-live'
+    atomic_write(journal,json.dumps(journal_data,indent=2)+'\n')
+    checks=verify_console(apps())
+    if not all(c['basic_and_totp'] for c in checks):raise GuardError('Console sequence readback failed')
+    print(json.dumps({'evidence':'MANAGEMENT_READBACK_NO_LIVE_LOGIN',
+                      'applied':True,'console':checks,'live_wso2_token_tests':'NOT_EXECUTED'},indent=2))
+
+
+def activation_readback(p,rt,j):
+    """Verify runtime registration evidence and bounded shared-state tables.
+
+    This is still NOT a browser login or token denial test.
+    """
+    _,secrets_data=envfile(p,False)
+    current=json.loads(run(['docker','inspect',rt['is_id']]))[0]
+    expected={rt['carbon_home']+'/repository/components/dropins/magalu-wso2-risk-osgi.jar',
+              rt['carbon_home']+'/repository/conf/deployment.toml',
+              '/opt/magalu-risk/policy'}
+    mounted={x['Destination'] for x in current.get('Mounts',[])}
+    if not expected.issubset(mounted):
+        raise GuardError('risk bundle/config/policies not mounted in current WSO2 service')
+    logs=run(['docker','logs','--since',str(j['applied_at_epoch']),rt['is_id']])
+    activated='MAGALU_RISK_ACTIVE' in logs
+    if not activated: raise GuardError('no OSGi service activation marker since recorded apply')
+    cmd=['docker','exec','-u','postgres',rt['pg_id'],'psql','-At','-U','postgres',
+         '-d',DB_NAME,'-c',"SELECT CASE WHEN to_regclass('magalu_risk.events') IS NOT NULL THEN 'yes' ELSE 'no' END;"]
+    if run(cmd).strip()!='yes':raise GuardError('shared risk PostgreSQL schema missing')
+    env_path,_=envfile(p,False)
+    ids=run(compose_cmd(p,'--env-file',str(env_path),'ps','-q','magalu-risk-retention',with_overlay=True)).strip().splitlines()
+    if len(ids)!=1 or not json.loads(run(['docker','inspect',ids[0]]))[0]['State']['Running']:
+        raise GuardError('risk-state expiry service is not running')
+    return {'osgi_activation_marker':activated,'risk_db_schema':DB_SCHEMA+'.events',
+            'retention_service':'RUNNING','mounts':'PRESENT'}
+
+def do_verify():
+    p=home();rt=runtime(p)
+    journal=p/'private/magalu-risk-apply.json'
+    if not journal.is_file():raise GuardError('apply journal absent')
+    j=json.loads(journal.read_text())
+    if j['phase']=='rolled-back': raise GuardError('risk deployment was rolled back')
+    if j['image_id']!=rt['image_id']:raise GuardError('image drift')
+    jar=EXT/'target/magalu-wso2-risk-osgi.jar'
+    if not jar.is_file() or sha(jar.read_bytes())!=j['jar_sha256']:
+        raise GuardError('local built bundle hash mismatch')
+    activated=activation_readback(p,rt,j)
+    marks=verify_console(apps())
+    native={t:{k:v["value"] for k,v in governance.discovered(t,request).items()} for t in BRANDS}
+    governance_ok=all(native[t]==governance.DESIRED[t] for t in BRANDS)
+    out={'evidence':'MANAGEMENT_READBACK_AND_LOCAL_FILES_ONLY','phase':j['phase'],
+         'console':marks,'activation':activated,'governance':native,'complete':governance_ok and all(x['basic_and_totp'] for x in marks),
+         'live_enforcement':'NOT_VERIFIED','signed_tokens':'NOT_VERIFIED',
+         'native_governance_readback':'VERIFIED_CONFIG_ONLY'}
+    print(json.dumps(out,indent=2))
+    if not out['complete']:raise GuardError('one or more Console login flows/native policies are not installed')
+
+
+def do_rollback(approve):
+    """Restore only journaled app sequences and governance values, never delete DB."""
+    p=home();rt=runtime(p)
+    path=p/'private/magalu-risk-apply.json'
+    if not path.is_file(): raise GuardError('no approved apply journal for safe rollback')
+    j=json.loads(path.read_text())
+    if j['plan_sha256']!=approve or j['image_id']!=rt['image_id']:
+        raise GuardError('rollback approval/image mismatch')
+    if j['phase']=='rolled-back':
+        print('SECURITY_ROLLBACK_ALREADY_APPLIED')
+        return
+    saved=json.loads((p/'private/magalu-risk-plan.json').read_text())
+    if saved.get('digest')!=approve: raise GuardError('source plan was modified')
+    original=j['app_sequence_before']
+    change={(i['tenant'],i['name']):i for i in saved['plan']['app_changes']}
+    current=apps()
+    # Preflight EVERY application before any rollback write to avoid drift.
+    for (tenant,name),app in current.items():
+        expected=change[(tenant,name)]
+        if fingerprint(app['authenticationSequence']) not in (expected['before'],expected['after']):
+            raise GuardError('unexpected live auth sequence: refuse rollback due to concurrent edit')
+    for (tenant,name),app in sorted(current.items()):
+        old=original[tenant+'/'+name]
+        if fingerprint(app['authenticationSequence'])==fingerprint(old):continue
+        api='/api/server/v1/applications/'+urllib.parse.quote(app['id'],safe='')
+        request(tenant,api,'PATCH',{'authenticationSequence':old})
+        if fingerprint(request(tenant,api)['authenticationSequence'])!=fingerprint(old):
+            raise GuardError('rollback app readback mismatch; stop')
+    # Restore exactly native keys changed by Magalu. Do not touch P119 controls.
+    for tenant in BRANDS:
+        before=saved['plan']['native_governance'][tenant]
+        found=governance.discovered(tenant,request)
+        grouped={}
+        for key,old in before.items():
+            actual=found[key]['value']; desired=governance.DESIRED[tenant][key]
+            if actual not in (old['value'],desired):
+                raise GuardError('unfamiliar native governance drift during rollback')
+            if actual!=old['value']:
+                grouped.setdefault(old['path'],[]).append({'name':key,'value':old['value']})
+        for api,props in sorted(grouped.items()):
+            request(tenant,api,'PATCH',{'operation':'UPDATE','properties':props})
+    env_path,_=envfile(p,False)
+    run(compose_cmd(p,'--env-file',str(env_path),'stop','magalu-risk-retention',with_overlay=True))
+    run(compose_cmd(p,'up','-d','--no-deps',rt['wso2_service']))
+    j['phase']='rolled-back'
+    atomic_write(path,json.dumps(j,indent=2)+'\n')
+    print(json.dumps({'evidence':'MANAGEMENT_READBACK_ONLY','rollback':'APPLIED',
+                      'risk_database':'PRESERVED_FOR_AUDIT','bundle_mount':'REMOVED_FROM_IS'},indent=2))
+
+
+def main():
+    ap=argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('command',choices=['inventory','plan','apply','verify','rollback','auth-check'])
+    ap.add_argument('--approve',default=None,help='SHA-256 printed by security-plan')
+    a=ap.parse_args()
+    try:
+        if a.command=='auth-check': do_auth_check()
+        elif a.command=='inventory': do_inventory()
+        elif a.command=='plan': do_plan()
+        elif a.command=='apply': do_apply(require(a.approve,'--approve <plan sha256> required'))
+        elif a.command=='rollback': do_rollback(require(a.approve,'--approve <original plan sha256> required'))
+        else: do_verify()
+    except (GuardError,UnsafeSequence,OSError,ValueError,subprocess.TimeoutExpired) as ex:
+        print('SECURITY_BOOTSTRAP_BLOCKED:',str(ex),file=sys.stderr)
+        sys.exit(2)
+
+if __name__=='__main__':main()

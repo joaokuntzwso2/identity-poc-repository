@@ -1,0 +1,55 @@
+import importlib.util
+import pathlib
+import unittest
+from unittest.mock import Mock
+
+ROOT=pathlib.Path(__file__).resolve().parents[1]
+spec=importlib.util.spec_from_file_location('gov', ROOT/'governance.py')
+g=importlib.util.module_from_spec(spec);spec.loader.exec_module(g)
+
+class GovernanceTest(unittest.TestCase):
+    def catalog(self, tenant):
+        self.props={key:'false' if key.endswith('enable') else '3'
+                    for key in g.DESIRED[tenant]}
+        def get(t,path):
+            self.assertEqual(t,tenant)
+            if path.endswith('/identity-governance/'):
+                return [{'id':'encoded-category'}]
+            if path.endswith('/connectors'):
+                return [{'id':'connector-1','properties':[
+                    {'name':key,'value':value} for key,value in self.props.items()] +
+                    [{'name':'SelfRegistration.Enable','value':'true'}]}]
+            raise AssertionError(path)
+        return get
+    def test_discovery_and_tenant_values(self):
+        for t in g.DESIRED:
+            get=self.catalog(t)
+            found=g.discovered(t,get)
+            self.assertEqual(set(found),set(g.DESIRED[t]))
+            self.assertIn('account.lock.handler.enable',g.delta(t,found))
+    def test_patch_only_allowlisted_fields(self):
+        t='aurora.identity.test';get=self.catalog(t)
+        before=g.discovered(t,get)
+        changes=[]
+        def patch(t,path,body):
+            self.assertEqual(body['operation'],'UPDATE')
+            for prop in body['properties']:
+                self.assertIn(prop['name'],g.DESIRED[t])
+                self.props[prop['name']]=prop['value']
+                changes.append(prop['name'])
+        after=g.apply(t,get,patch,before)
+        self.assertEqual({k:v['value'] for k,v in after.items()},g.DESIRED[t])
+        self.assertNotIn('SelfRegistration.Enable',changes)
+    def test_refuse_drift(self):
+        t='brisa.identity.test';get=self.catalog(t)
+        before=g.discovered(t,get)
+        self.props['account.lock.handler.enable']='true'
+        with self.assertRaises(g.GovernanceMismatch):g.apply(t,get,lambda *a:None,before)
+    def test_missing_property_fails(self):
+        t='aurora.identity.test';get=self.catalog(t)
+        del self.props['account.lock.handler.enable']
+        with self.assertRaises(g.GovernanceMismatch):g.discovered(t,get)
+    def test_wrong_tenant_rejected(self):
+        with self.assertRaises(g.GovernanceMismatch):g.discovered('carbon.super',lambda *a:[])
+
+if __name__=='__main__':unittest.main()

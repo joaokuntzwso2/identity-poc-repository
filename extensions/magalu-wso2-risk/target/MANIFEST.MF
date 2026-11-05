@@ -1,0 +1,8 @@
+Manifest-Version: 1.0
+Bundle-ManifestVersion: 2
+Bundle-SymbolicName: com.magalu.wso2.identity.risk
+Bundle-Name: Magalu WSO2 GA Risk Enforcement
+Bundle-Version: 0.1.0
+Bundle-ClassPath: .,lib/postgresql.jar
+Service-Component: OSGI-INF/magalu-risk.xml
+Import-Package: org.osgi.framework,org.osgi.service.component,javax.servlet.http,org.wso2.carbon.identity.application.authentication.framework,org.wso2.carbon.identity.application.authentication.framework.config.model.graph.js,org.wso2.carbon.identity.application.authentication.framework.context,org.wso2.carbon.identity.application.authentication.framework.util,org.wso2.carbon.identity.event,org.wso2.carbon.identity.event.event,org.wso2.carbon.identity.event.handler

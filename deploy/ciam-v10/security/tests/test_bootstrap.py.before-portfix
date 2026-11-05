@@ -1,0 +1,73 @@
+import importlib.util
+import pathlib
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+ROOT=pathlib.Path(__file__).resolve().parents[1]
+SCRIPTS=ROOT.parents[2]/'scripts'
+sys.path.insert(0,str(ROOT))
+import bootstrap as b
+spec=importlib.util.spec_from_file_location('patcher',SCRIPTS/'magalu-install-dispatch.py')
+patcher=importlib.util.module_from_spec(spec);spec.loader.exec_module(patcher)
+
+class BootstrapTest(unittest.TestCase):
+    def test_dispatch_insertion_above_all_side_effects(self):
+        prior='#!/usr/bin/env bash\nset -e\necho MUTATION-PREHOOK\n'
+        modified=patcher.inject(prior)
+        self.assertTrue(modified.startswith('#!/usr/bin/env bash\n# BEGIN magalu'))
+        self.assertEqual(modified.count('echo MUTATION-PREHOOK'),1)
+        self.assertEqual(modified,patcher.inject(modified))
+    def test_unsafe_script_not_patched(self):
+        with self.assertRaises(RuntimeError):patcher.inject('#!/bin/sh\nprehook\n')
+    def test_runtime_missing_does_not_touch_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            with patch.dict('os.environ',{'CIAM_V10_HOME':d}):
+                with self.assertRaises(b.GuardError):b.home()
+            self.assertEqual(list(pathlib.Path(d).iterdir()),[])
+    def test_api_boundary_rejects_tenant_before_network(self):
+        with self.assertRaises(b.GuardError):b.request('carbon.super','/api/server/v1/applications')
+        with self.assertRaises(b.GuardError):b.request('aurora.identity.test','/oauth2/token')
+    def test_apps_are_exactly_four(self):
+        self.assertEqual(sum(len(v) for v in b.BRANDS.values()),4)
+        self.assertNotIn('carbon.super',b.BRANDS)
+    def test_config_registration_only_once(self):
+        text=(ROOT/'deployment.toml.fragment').read_text()
+        self.assertEqual(text.count('name = "magaluRiskEventHandler"'),1)
+    def test_generated_compose_is_complete_and_secret_free(self):
+        import yaml
+        with tempfile.TemporaryDirectory() as d:
+            home=pathlib.Path(d)
+            (home/'private').mkdir()
+            (home/'private/deployment.toml').write_text('[server]\nhostname = "localhost"\n')
+            ext=home/'extension'
+            (ext/'target').mkdir(parents=True)
+            (ext/'target/magalu-wso2-risk-osgi.jar').write_bytes(b'FAKE UNIT TEST JAR')
+            rt={'wso2_service':'is','postgres_service':'database',
+                'carbon_home':'/opt/wso2is','image_id':'sha256:fake'}
+            with patch.object(b,'EXT',ext):
+                target=b.make_overlay(home,rt)
+            overlay=yaml.safe_load((home/'compose.magalu-risk.yaml').read_text())
+            services=overlay['services']
+            self.assertIn('is',services)
+            self.assertIn('magalu-risk-retention',services)
+            self.assertIn('MAGALU_RISK_JDBC_URL',services['is']['environment'])
+            self.assertIn('magalu-wso2-risk-osgi.jar',str(services['is']['volumes']))
+            self.assertIn('magaluRiskEventHandler',(target/'deployment.toml').read_text())
+            self.assertNotIn('FAKE UNIT TEST JAR',(home/'compose.magalu-risk.yaml').read_text())
+    def test_v10_host_port_not_internal_port_confusion(self):
+        self.assertTrue(b.valid_v10_ports([{'target':9443,'published':'9444'}]))
+        self.assertFalse(b.valid_v10_ports([{'target':9443,'published':'9443'}]))
+        self.assertFalse(b.valid_v10_ports([{'target':9444,'published':'9443'}]))
+    def test_source_fingerprint_changes_with_sources(self):
+        fp=b.source_fingerprint()
+        self.assertEqual(len(fp),64)
+        self.assertTrue(all(x in '0123456789abcdef' for x in fp))
+    def test_visual_report_detects_missing_step(self):
+        checks=b.verify_console({('brisa.identity.test','brisa-web'):{
+            'authenticationSequence':{'steps':[{'options':[{'authenticator':'basic'}]}],
+                                      'script':''}}})
+        self.assertFalse(checks[0]['basic_and_totp'])
+
+if __name__=='__main__':unittest.main()

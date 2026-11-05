@@ -1,0 +1,72 @@
+"""WSO2 GA REST application sequence policy composer, conservative and drift refusing.
+
+No side effects from compose(). Caller supplies actual readback app object.
+If current Aurora P0.10 script cannot be fingerprinted, the composer refuses.
+"""
+import copy
+import hashlib
+import json
+import re
+from pathlib import Path
+
+EXPECTED = {
+    "aurora.identity.test": {"aurora-web", "aurora-app"},
+    "brisa.identity.test": {"brisa-web", "brisa-app"},
+}
+
+class UnsafeSequence(Exception):
+    pass
+
+GATE = '''\n            // BEGIN magalu-risk controlled injection (server-side credential proof only)\n            var magaluDecision = magaluRiskCheck(context, context.steps[1].subject.username);\n            if (magaluDecision === 'DENY' || magaluDecision === 'DELAY' || magaluDecision == null) {\n                fail({'errorCode':'access_denied', 'errorMessage':'Authentication could not be completed'});\n                return;\n            }\n            if (magaluDecision === 'CHALLENGE' || magaluDecision === 'STEP_UP') {\n                executeStep(2);\n                return;\n            }\n            // END magalu-risk controlled injection\n'''
+
+BASIC = {"idp": "LOCAL", "authenticator": "BasicAuthenticator"}
+TOTP = {"idp": "LOCAL", "authenticator": "totp"}
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def fingerprint(value):
+    return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+
+def compose(tenant, name, app, brisa_script):
+    if tenant not in EXPECTED or name not in EXPECTED[tenant]:
+        raise UnsafeSequence("tenant/app not allowlisted")
+    if app.get("name") != name or not isinstance(app.get("id"), str):
+        raise UnsafeSequence("unknown or mismatched application")
+    sequence = app.get("authenticationSequence")
+    if not isinstance(sequence, dict):
+        raise UnsafeSequence("unknown auth sequence")
+    steps=sequence.get("steps")
+    if not isinstance(steps,list) or not steps or steps[0].get("id") != 1:
+        raise UnsafeSequence("step 1 absent")
+    first=steps[0].get("options", [])
+    if len(first)!=1 or first[0].get("idp") != "LOCAL" or first[0].get("authenticator") not in ("basic", "BasicAuthenticator"):
+        raise UnsafeSequence("BasicAuthenticator step fingerprint mismatch")
+    new=copy.deepcopy(sequence)
+    if tenant.startswith("aurora"):
+        if len(steps)!=2 or steps[1].get("id")!=2 or len(steps[1].get("options",[]))!=1 or steps[1]["options"][0].get("authenticator")!="totp":
+            raise UnsafeSequence("Aurora P0.10 TOTP stage absent")
+        script=sequence.get("script") or ""
+        if "magaluRiskCheck" in script: raise UnsafeSequence("prior risk installation / drift")
+        # P0.10 requested ACR and genuine TOTP executeStep path must remain intact.
+        if "requestedAcr" not in script or "executeStep(2)" not in script:
+            raise UnsafeSequence("Aurora requested-ACR assurance script not recognized")
+        rx=re.compile(r"executeStep\s*\(\s*1\s*,\s*\{\s*onSuccess\s*:\s*function\s*\(\s*context\s*\)\s*\{", re.S)
+        matches=list(rx.finditer(script))
+        if len(matches)!=1: raise UnsafeSequence("Aurora onSuccess insertion point ambiguous")
+        index=matches[0].end()
+        new["script"]=script[:index]+GATE+script[index:]
+    else:
+        if len(steps)!=1 or sequence.get("script") not in (None, ""):
+            raise UnsafeSequence("Brisa non-default flow or unexpected script: refuse overwrite")
+        new["steps"].append({"id":2,"options":[TOTP]})
+        new["type"]="USER_DEFINED"
+        new["script"]=brisa_script
+    return new
+
+
+def read_brisa_script(root):
+    return (root/"scripts"/"magalu-risk-flow.js").read_text()

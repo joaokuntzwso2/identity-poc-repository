@@ -1,0 +1,199 @@
+"""Bounded tenant-scoped WSO2 7.3 GA management M2M client for Magalu bootstrap.
+
+The exact existing CIAM-v10 resource journal contract is shared with
+``deploy/ciam-v10/oidc/bootstrap.py:bearer(client, rs, brand)``:
+rs['tenants'][brand]['management']['clientId'|'clientSecret'].
+
+No tenant administrator Basic credentials are used for management REST calls.
+No secrets or tokens are returned in errors or serialized to disk.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import pathlib
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from credential_store import _secure_load, CredentialError
+
+DOMAINS = {
+    'aurora.identity.test': 'aurora',
+    'brisa.identity.test': 'brisa',
+}
+BASE = 'https://localhost:9444'
+APPLICATION_VIEW = ('internal_application_mgt_view',)
+APPLICATION_WRITE = ('internal_application_mgt_view', 'internal_application_mgt_update',
+                     'internal_application_script_update')
+GOVERNANCE_VIEW = ('internal_governance_view',)
+GOVERNANCE_WRITE = ('internal_governance_view', 'internal_governance_update')
+MAX_RESPONSE = 2_000_000
+# Short-lived process-only cache: never store tokens in the v10 private journals.
+_TOKEN_CACHE = {}
+
+
+class OAuthBlocked(RuntimeError):
+    """Error messages are sanitized: no usernames, secrets, tokens or HTTP bodies."""
+
+
+def _management(v10_home, tenant):
+    if tenant not in DOMAINS:
+        raise OAuthBlocked('UNSUPPORTED_TENANT')
+    root = pathlib.Path(v10_home).expanduser().resolve()
+    private = root / 'private'
+    if private.is_symlink() or not private.is_dir():
+        raise OAuthBlocked('RESOURCE_PRIVATE_DIRECTORY_UNSAFE')
+    st = private.stat()
+    if st.st_uid != os.getuid() or st.st_mode & 0o022:
+        raise OAuthBlocked('RESOURCE_PRIVATE_DIRECTORY_UNSAFE')
+    path = private / 'bootstrap-resources-v10.private.json'
+    try:
+        journal = _secure_load(path)
+    except CredentialError:
+        raise OAuthBlocked('RESOURCE_JOURNAL_UNSAFE_OR_INVALID') from None
+    if not isinstance(journal, dict):
+        raise OAuthBlocked('RESOURCE_JOURNAL_MISSING')
+    brand = DOMAINS[tenant]
+    tenants = journal.get('tenants')
+    if not isinstance(tenants, dict) or not isinstance(tenants.get(brand), dict):
+        raise OAuthBlocked('RESOURCE_TENANT_RECORD_MISSING')
+    node = tenants[brand]
+    for name in ('domain', 'tenantDomain'):
+        if name in node and node[name] != tenant:
+            raise OAuthBlocked('RESOURCE_TENANT_DOMAIN_MISMATCH')
+    manager = node.get('management')
+    if not isinstance(manager, dict):
+        raise OAuthBlocked('RESOURCE_MANAGEMENT_CLIENT_MISSING')
+    cid = manager.get('clientId')
+    secret = manager.get('clientSecret')
+    if not (isinstance(cid, str) and 1 <= len(cid) <= 512
+            and isinstance(secret, str) and 1 <= len(secret) <= 4096
+            and all(c not in '\r\n:' for c in cid)
+            and all(c not in '\r\n' for c in secret)):
+        raise OAuthBlocked('RESOURCE_CLIENT_CREDENTIALS_UNAVAILABLE')
+    return cid, secret
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise OAuthBlocked('UNEXPECTED_HTTP_REDIRECT')
+
+
+def _opener(context):
+    # Do not inherit HTTP_PROXY/HTTPS_PROXY on local privileged management calls.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}),
+                                       urllib.request.HTTPSHandler(context=context),
+                                       _NoRedirect())
+
+
+def _call(opener, request):
+    try:
+        with opener.open(request, timeout=6) as reply:
+            raw = reply.read(MAX_RESPONSE + 1)
+            if len(raw) > MAX_RESPONSE:
+                raise OAuthBlocked('MANAGEMENT_RESPONSE_TOO_LARGE')
+            status = reply.getcode()
+            if status < 200 or status >= 300:
+                raise OAuthBlocked(f'HTTP_{status}')
+            if not raw:
+                return {}
+            try:
+                return json.loads(raw)
+            except (ValueError, UnicodeError):
+                raise OAuthBlocked('INVALID_JSON_RESPONSE') from None
+    except urllib.error.HTTPError as ex:
+        raise OAuthBlocked(f'HTTP_{ex.code}') from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise OAuthBlocked('MANAGEMENT_NETWORK_OR_TLS_FAILURE') from None
+
+
+def _token(opener, v10_home, tenant, scopes):
+    if not scopes or len(scopes) != len(set(scopes)):
+        raise OAuthBlocked('INVALID_REQUIRED_SCOPES')
+    # Bound cache lifetime even if WSO2 reports a much longer expires_in.
+    cache_key = (str(pathlib.Path(v10_home).expanduser().resolve()), tenant, scopes)
+    cached = _TOKEN_CACHE.get(cache_key)
+    if cached and cached[1] > time.monotonic():
+        return cached[0]
+    cid, secret = _management(v10_home, tenant)
+    basic = base64.b64encode((cid + ':' + secret).encode('utf-8')).decode('ascii')
+    payload = urllib.parse.urlencode({
+        'grant_type': 'client_credentials', 'scope': ' '.join(scopes)
+    }).encode('ascii')
+    url = BASE + '/t/' + tenant + '/oauth2/token'
+    req = urllib.request.Request(url, method='POST', data=payload, headers={
+        'Authorization': 'Basic ' + basic,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+    })
+    result = _call(opener, req)
+    if not isinstance(result, dict):
+        raise OAuthBlocked('INVALID_TOKEN_RESPONSE')
+    granted = result.get('scope')
+    token = result.get('access_token')
+    token_type = result.get('token_type')
+    if (not isinstance(token_type, str) or token_type.lower() != 'bearer'
+            or not isinstance(granted, str)
+            or not set(scopes).issubset(set(granted.split()))
+            or not isinstance(token, str) or not (16 <= len(token) <= 8192)
+            or any(c in token for c in '\r\n')):
+        raise OAuthBlocked('M2M_SCOPE_OR_TOKEN_VALIDATION_FAILED')
+    try:
+        ttl = int(result.get('expires_in', 0))
+    except (TypeError, ValueError, OverflowError):
+        ttl = 0
+    if ttl > 45:
+        if len(_TOKEN_CACHE) >= 16:
+            _TOKEN_CACHE.clear()
+        _TOKEN_CACHE[cache_key] = (token, time.monotonic() + min(ttl - 30, 120))
+    return token
+
+
+def _api_scopes(path, method):
+    if not path.startswith('/api/server/v1/') or '..' in path or '#' in path:
+        raise OAuthBlocked('FORBIDDEN_MANAGEMENT_PATH')
+    if (path == '/api/server/v1/applications'
+            or path.startswith('/api/server/v1/applications?')
+            or path.startswith('/api/server/v1/applications/')):
+        return APPLICATION_VIEW if method == 'GET' else APPLICATION_WRITE
+    if path.startswith('/api/server/v1/identity-governance/'):
+        return GOVERNANCE_VIEW if method == 'GET' else GOVERNANCE_WRITE
+    raise OAuthBlocked('UNSUPPORTED_MANAGEMENT_API')
+
+
+def management_request(v10_home, tenant, path, method='GET', body=None, *, context):
+    if tenant not in DOMAINS:
+        raise OAuthBlocked('UNSUPPORTED_TENANT')
+    if method not in ('GET', 'PATCH'):
+        raise OAuthBlocked('UNSUPPORTED_HTTP_METHOD')
+    if method == 'GET' and body is not None:
+        raise OAuthBlocked('GET_BODY_FORBIDDEN')
+    if method == 'PATCH' and not isinstance(body, dict):
+        raise OAuthBlocked('PATCH_BODY_REQUIRED')
+    scopes = _api_scopes(path, method)
+    opener = _opener(context)
+    token = _token(opener, v10_home, tenant, scopes)
+    payload = json.dumps(body, separators=(',', ':')).encode('utf-8') if body is not None else None
+    req = urllib.request.Request(BASE + '/t/' + tenant + path, data=payload,
+                                 method=method, headers={
+                                     'Authorization': 'Bearer ' + token,
+                                     'Accept': 'application/json',
+                                     **({'Content-Type': 'application/json'} if body is not None else {}),
+                                 })
+    return _call(opener, req)
+
+
+def preflight_write_scopes(v10_home, tenant, context):
+    """Request and validate write capabilities BEFORE any Docker/DB changes.
+
+    This does not grant missing privileges or make application/governance writes.
+    It proves only the token-scopes contract, not WSO2 management permissions.
+    """
+    if tenant not in DOMAINS:
+        raise OAuthBlocked('UNSUPPORTED_TENANT')
+    opener = _opener(context)
+    _token(opener, v10_home, tenant, APPLICATION_WRITE)
+    _token(opener, v10_home, tenant, GOVERNANCE_WRITE)

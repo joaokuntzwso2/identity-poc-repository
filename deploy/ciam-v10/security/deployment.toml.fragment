@@ -1,0 +1,6 @@
+# Appended idempotently ONLY to the private v10 deployment.toml, after a verified plan.
+# Event handler collection runs after failed Basic and after successful authentication;
+# server-side DENY/STEP_UP runs in the conditional authentication function.
+[[event_handler]]
+name = "magaluRiskEventHandler"
+subscriptions = ["AUTHENTICATION_STEP_FAILURE", "AUTHENTICATION_SUCCESS"]

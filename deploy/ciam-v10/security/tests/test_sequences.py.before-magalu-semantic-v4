@@ -1,0 +1,40 @@
+import importlib.util
+import pathlib
+import unittest
+ROOT=pathlib.Path(__file__).resolve().parents[1]
+spec=importlib.util.spec_from_file_location('sequences', ROOT/'application_sequences.py')
+m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+
+class ComposerTest(unittest.TestCase):
+    def app(self, name, tenant):
+        seq={'type':'USER_DEFINED' if tenant.startswith('aurora') else 'DEFAULT',
+             'steps':[{'id':1,'options':[{'idp':'LOCAL','authenticator':'basic'}]}],
+             'subjectStepId':1, 'attributeStepId':1}
+        if tenant.startswith('aurora'):
+            seq['steps'].append({'id':2,'options':[{'idp':'LOCAL','authenticator':'totp'}]})
+            seq['script']='var onLoginRequest = function(context) { executeStep(1, { onSuccess: function(context) { if (context.requestedAcr === "approval") { executeStep(2); } } }); };'
+        return {'id':'a123','name':name,'authenticationSequence':seq,'inboundProtocols':[{'id':'id-preserved'}]}
+    def test_aurora_preserves_acr_path(self):
+        a=self.app('aurora-web','aurora.identity.test')
+        before=m.fingerprint(a)
+        new=m.compose('aurora.identity.test','aurora-web',a,'')
+        self.assertIn('context.requestedAcr === "approval"',new['script'])
+        self.assertIn('magaluRiskCheck',new['script'])
+        self.assertEqual(a['authenticationSequence']['steps'],new['steps'])
+        self.assertEqual(before,m.fingerprint(a))
+    def test_brisa_adds_totp_without_recreating_app(self):
+        a=self.app('brisa-web','brisa.identity.test')
+        new=m.compose('brisa.identity.test','brisa-web',a,'valid-js')
+        self.assertEqual(len(new['steps']),2)
+        self.assertEqual(new['steps'][1]['options'][0]['authenticator'],'totp')
+    def test_unknown_script_fails_closed(self):
+        a=self.app('aurora-app','aurora.identity.test');a['authenticationSequence']['script']='bad'
+        with self.assertRaises(m.UnsafeSequence):m.compose('aurora.identity.test','aurora-app',a,'')
+    def test_alternate_tenant_fails_closed(self):
+        a=self.app('brisa-app','brisa.identity.test')
+        with self.assertRaises(m.UnsafeSequence):m.compose('carbon.super','brisa-app',a,'')
+    def test_drift_fails_closed(self):
+        a=self.app('brisa-web','brisa.identity.test');a['authenticationSequence']['steps'].append({'id':2})
+        with self.assertRaises(m.UnsafeSequence):m.compose('brisa.identity.test','brisa-web',a,'')
+
+if __name__=='__main__': unittest.main()
