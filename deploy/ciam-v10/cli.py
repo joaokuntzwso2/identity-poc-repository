@@ -27,6 +27,7 @@ AUTHORITY = HERE / 'authority/bootstrap.py'
 IDENTITIES = HERE / 'identities/bootstrap.py'
 INTROSPECTION = HERE / 'server/introspection_maintenance.py'
 TENANTS = HERE / 'tenants/provision.py'
+MAGALU_SECURITY = HERE / 'security/cli.py'
 PROJECT = 'wso2-ciam-v10'
 
 class Stop(Exception): pass
@@ -160,6 +161,20 @@ def bootstrap_all():
     # The BFF bridge must run AFTER the authority journal and WSO2 readback;
     # only then can it request the real ciam:profile:read scope.
     run([sys.executable,OIDC,'bridge-bff','--repo',REPO])
+    # Native Magalu security is part of the existing v10 bootstrap. The
+    # bridge has already installed the pinned certificate required by plan.
+    security_plan = subprocess.run(
+        [sys.executable, MAGALU_SECURITY, 'plan'], cwd=REPO,
+        check=True, capture_output=True, text=True)
+    security_hash = json.loads(security_plan.stdout)['planSha256']
+    security_env = os.environ.copy()
+    security_env.update({
+        'MAGALU_SECURITY_CONFIRM': 'APPLY_MAGALU_NATIVE_SECURITY_TO_EXISTING_GA_V10',
+        'MAGALU_SECURITY_PLAN_SHA256': security_hash,
+        'MAGALU_SECURITY_ALLOW_RESTART': 'YES_RESTART_ONLY_V10_GA',
+    })
+    run([sys.executable, MAGALU_SECURITY, 'apply'], env=security_env, cwd=REPO)
+    run([sys.executable, MAGALU_SECURITY, 'verify'], cwd=REPO)
     run([sys.executable,OIDC,'start-bff','--repo',REPO])
     wait_bff()
     negative=automation.negative_runtime_acceptance(
@@ -205,12 +220,18 @@ def prepare():
 def main():
     if len(sys.argv)!=2:raise Stop('USAGE: scripts/ciam-v10.sh COMMAND')
     command=sys.argv[1]
+    # First-class GA v10 commands; bypass P2 partner startup hooks.
+    if command in ('security-plan','security-apply','security-verify','security-status'):
+        repo_guard();root_guard()
+        p=subprocess.run([sys.executable,MAGALU_SECURITY,command.split('-',1)[1]],
+                         cwd=REPO,check=False)
+        raise SystemExit(p.returncode)
     # P011_P012_ROUTER_V1: separate additive commands, existing v10 commands unchanged.
     if command in ('offline-test','security-audit','inventory','readiness','live-acceptance','live-negative','provision-plan','provision-apply'):
         p=subprocess.run([sys.executable,HERE/'p011_p012/cli.py',command],cwd=REPO,check=False)
         raise SystemExit(p.returncode)
     if command=='help':
-        output({'commands':['fresh','fresh-bootstrap','bootstrap','status','bff-diagnose','bff-start','bff-clear-stale','test',
+        output({'commands':['fresh','fresh-bootstrap','bootstrap','status','security-plan','security-apply','security-verify','security-status','bff-diagnose','bff-start','bff-clear-stale','test',
                            'authority-preflight','authority-evidence','authorization-plan','authorization-apply','authorization-reconcile',
                            'consent-verify','consent-plan','consent-apply','authority-status','runtime-acceptance','bff-runtime-plan','bff-restart',
                             'offline-test','security-audit','inventory','readiness','live-acceptance','live-negative','provision-plan','provision-apply',
@@ -232,6 +253,8 @@ def main():
         for stage,script in [('tenants',TENANTS),('resources',RESOURCES),('oidc',OIDC)]:
             print('STAGE_'+stage.upper())
             run([sys.executable,script,'status'])
+        print('STAGE_MAGALU_SECURITY')
+        run([sys.executable,MAGALU_SECURITY,'status'])
         bff_diagnose()
     elif command in ('authority-preflight','authority-evidence','authorization-plan','authorization-apply',
                      'authorization-reconcile','consent-verify','consent-plan',

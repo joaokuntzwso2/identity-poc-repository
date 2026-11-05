@@ -1,0 +1,17 @@
+{
+  "schema": "magalu.wso2.native.security.v1",
+  "brand": "aurora",
+  "domain": "aurora.identity.test",
+  "loginAttempts": {
+    "enabled": true,
+    "maximumFailures": 5,
+    "lockMinutes": 5,
+    "durationMultiplier": 2,
+    "stepUpAfterFailures": 3
+  },
+  "recaptcha": {
+    "enabled": true,
+    "always": false,
+    "maximumFailuresBeforeChallenge": 2
+  }
+}

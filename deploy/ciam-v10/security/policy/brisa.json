@@ -1,0 +1,17 @@
+{
+  "schema": "magalu.wso2.native.security.v1",
+  "brand": "brisa",
+  "domain": "brisa.identity.test",
+  "loginAttempts": {
+    "enabled": true,
+    "maximumFailures": 6,
+    "lockMinutes": 10,
+    "durationMultiplier": 2,
+    "stepUpAfterFailures": 4
+  },
+  "recaptcha": {
+    "enabled": true,
+    "always": false,
+    "maximumFailuresBeforeChallenge": 2
+  }
+}
