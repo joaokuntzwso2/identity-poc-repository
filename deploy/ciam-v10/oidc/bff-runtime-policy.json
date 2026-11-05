@@ -1,0 +1,9 @@
+{
+  "schema": "identity.wso2.ciam.v10.bff-runtime.v1",
+  "casesApiAudience": "urn:ciampoc:service-requests:v1",
+  "casesScopesEnabled": true,
+  "totpStepupAcr": "urn:ciampoc:assurance:totp:v1",
+  "totpStepupAmr": "totp",
+  "casesBackend": "jsonl",
+  "businessDataDir": "var/ciam-business-data"
+}

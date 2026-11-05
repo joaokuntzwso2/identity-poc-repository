@@ -349,40 +349,100 @@ def read_pem(p):
         raise Refuse('CERT_FILE_UNSAFE')
     return p.read_text()
 
+def verified_authority_env(s, authority_path=None):
+    """Validate the owned readback journal before any BFF process or manifest write.
+
+    A missing, unsafe or drifted journal must not silently omit authorization
+    controls. This is a local readback, not a WSO2 management API mutation.
+    """
+    path=Path(authority_path) if authority_path is not None else PRIVATE/'bootstrap-authority-v10.private.json'
+    authority=read_private(path)
+    if not isinstance(authority,dict) or any((
+        authority.get('schema')!='identity.wso2.ciam.v10.authority.v1',
+        authority.get('base')!=BASE,
+        authority.get('apiIdentifier')!='https://api.ciam-v10.test/profile',
+        authority.get('scope')!='ciam:profile:read',
+        authority.get('acceptance')!='API_ROLES_AND_ASSIGNMENTS_READBACK_VERIFIED_BROWSERS_NOT_TESTED',
+    )):
+        raise Refuse('BFF_AUTHORITY_JOURNAL_INVARIANTS_FAILED')
+    tenants=authority.get('tenants')
+    configured=s.get('tenants') if isinstance(s,dict) else None
+    if not isinstance(tenants,dict) or not isinstance(configured,dict):
+        raise Refuse('BFF_AUTHORITY_TENANT_SHAPE_INVALID')
+    for brand in DOMAINS:
+        node=tenants.get(brand)
+        local=configured.get(brand)
+        if not isinstance(node,dict) or not isinstance(local,dict):
+            raise Refuse('BFF_AUTHORITY_TENANT_SHAPE_INVALID')
+        apps=node.get('apps')
+        authorizations=node.get('authorizations')
+        resource=node.get('resource')
+        clients=local.get('clients')
+        if (not isinstance(apps,dict) or not isinstance(authorizations,dict)
+                or not isinstance(resource,dict) or not isinstance(clients,dict)
+                or resource.get('state')!='verified'):
+            raise Refuse('BFF_AUTHORITY_RESOURCE_READBACK_INVALID_'+brand)
+        for channel in CHANNELS:
+            app=clients.get(channel)
+            authorization=authorizations.get(channel)
+            role=node.get('role_'+channel)
+            if (not isinstance(app,dict) or not isinstance(authorization,dict)
+                    or not isinstance(role,dict) or not isinstance(app.get('id'),str)
+                    or not app['id'] or apps.get(channel)!=app['id']
+                    or authorization.get('state')!='verified'
+                    or role.get('state')!='verified'):
+                raise Refuse('BFF_AUTHORITY_CLIENT_READBACK_INVALID_'+brand+'_'+channel)
+    return {'WSO2_AUTHORITY_OIDC_SCOPE':'ciam:profile:read',
+            'WSO2_BUSINESS_API_AUDIENCE':authority['apiIdentifier']}
+
 def start_bff(s,repo):
-    report=publish_bff(s,repo)
+    # This launcher is strictly for the local HTTP loopback demonstration.
+    # AWS must use a separate reviewed HTTPS deployment adapter rather than
+    # silently inheriting ALLOW_INSECURE_LOCAL and localhost URLs.
+    if os.environ.get('NODE_ENV', '').lower() == 'production':
+        raise Refuse('LOCAL_HTTP_BFF_LAUNCHER_NOT_FOR_PRODUCTION')
+    # Every security policy and local port prerequisite must pass before
+    # publish_bff creates a manifest or pins a certificate. In particular,
+    # do not write a private manifest and only then notice disabled scopes.
+    authority_env=verified_authority_env(s)
+    for key,value in authority_env.items():
+        if key in os.environ and os.environ[key]!=value:
+            raise Refuse('BFF_AUTHORITY_INHERITED_CONFLICT_'+key)
     repo=Path(repo).resolve()
-    port_check=__import__('socket').socket()
-    try:
-        port_check.settimeout(0.5)
-        if port_check.connect_ex(('127.0.0.1',4400))==0:raise Refuse('PORT_4400_IN_USE_REFUSED')
-    finally:port_check.close()
     env=os.environ.copy()
     env.update({'IDENTITY_MODE':'live-wso2','PORT':'4400','PUBLIC_ORIGIN':BFF_ORIGIN,
                 'ALLOW_INSECURE_LOCAL':'true','BIND_HOST':'127.0.0.1',
                 'WSO2_BFF_PRIVATE_MANIFEST':str(repo/'var/wso2/identity-bff-v10.private.json'),
                 'NODE_EXTRA_CA_CERTS':str(CERT),'NODE_ENV':'development'})
-    # Read-only bridge of the separately verified authority journal. No client
-    # registration, rotation, or mutation of either existing private journal.
-    authority_file=PRIVATE/'bootstrap-authority-v10.private.json'
-    if authority_file.exists() or authority_file.is_symlink():
-        authority=read_private(authority_file)
-        if (authority.get('schema')=='identity.wso2.ciam.v10.authority.v1'
-            and authority.get('base')==BASE
-            and authority.get('apiIdentifier')=='https://api.ciam-v10.test/profile'
-            and authority.get('scope')=='ciam:profile:read'
-            and authority.get('acceptance')=='API_ROLES_AND_ASSIGNMENTS_READBACK_VERIFIED_BROWSERS_NOT_TESTED'
-            and all(authority.get('tenants',{}).get(b,{}).get('apps',{}).get(c) == s['tenants'][b]['clients'][c]['id']
-                    and authority['tenants'][b].get('resource',{}).get('state')=='verified'
-                    and authority['tenants'][b].get('authorizations',{}).get(c,{}).get('state')=='verified'
-                    and authority['tenants'][b].get('role_'+c,{}).get('state')=='verified'
-                    for b in DOMAINS for c in CHANNELS)):
-            env['WSO2_AUTHORITY_OIDC_SCOPE']='ciam:profile:read'
-            env['WSO2_BUSINESS_API_AUDIENCE']=authority['apiIdentifier']
+    from bff_runtime_config import build_cases_runtime_env, RuntimeConfigurationError
+    try:
+        env.update(build_cases_runtime_env(repo, env))
+    except RuntimeConfigurationError as exc:
+        raise Refuse(str(exc)) from None
+    # Verified authority is required, not a best-effort optional environment.
+    env.update(authority_env)
+    port_check=__import__('socket').socket()
+    try:
+        port_check.settimeout(0.5)
+        if port_check.connect_ex(('127.0.0.1',4400))==0:raise Refuse('PORT_4400_IN_USE_REFUSED')
+    finally:port_check.close()
+    # A stale PID or unsafe logfile must refuse BEFORE publish_bff creates a
+    # private manifest or a certificate. Never follow a log symlink.
     logfile=PRIVATE/'bff-v10.log';pidfile=PRIVATE/'bff-v10.pid'
     if pidfile.exists() or pidfile.is_symlink():raise Refuse('PIDFILE_EXISTS_REFUSED')
-    fd=os.open(logfile,os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
+    if logfile.is_symlink():raise Refuse('BFF_LOGFILE_SYMLINK_REFUSED')
+    if logfile.exists():
+        logstat=logfile.stat()
+        if (not stat.S_ISREG(logstat.st_mode) or logstat.st_uid!=os.getuid()
+                or stat.S_IMODE(logstat.st_mode)!=0o600):
+            raise Refuse('BFF_LOGFILE_UNSAFE_REFUSED')
+    report=publish_bff(s,repo)
+    fd=os.open(logfile,os.O_WRONLY|os.O_CREAT|os.O_APPEND|os.O_NOFOLLOW,0o600)
     try:
+        logstat=os.fstat(fd)
+        if (not stat.S_ISREG(logstat.st_mode) or logstat.st_uid!=os.getuid()
+                or stat.S_IMODE(logstat.st_mode)!=0o600):
+            raise Refuse('BFF_LOGFILE_UNSAFE_REFUSED')
         proc=subprocess.Popen(['node','services/identity-bff/src/server.js'],cwd=repo,env=env,
                               stdin=subprocess.DEVNULL,stdout=fd,stderr=subprocess.STDOUT,start_new_session=True)
     finally:os.close(fd)

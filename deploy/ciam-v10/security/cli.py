@@ -41,6 +41,8 @@ CONTAINER = 'wso2-ciam-v10-is-1'
 VOLUME = 'wso2-ciam-v10_isconf'
 REMOTE_CONF = '/home/wso2carbon/wso2is-7.3.0/repository/conf/deployment.toml'
 SCHEMA = 'magalu.wso2.native.security.journal.v1'
+# Audited repaired GraalJS source. An intentional update needs new tests and a new digest.
+APPROVED_GRAAL_TEMPLATE_SHA256 = '36849343cbcd7430f3cf61f71a80fb0416a045181a2b26f60fd67f4dc85cceda'
 ID = re.compile(r'^[A-Za-z0-9_+/-]{1,160}={0,2}$')
 
 # These *documented property names* are looked up from live connector responses.
@@ -128,6 +130,8 @@ def policies():
 
 def script_for(brand, cfg):
     text = (HERE / 'scripts/magalu-adaptive.js').read_text(encoding='utf-8')
+    need(hashlib.sha256(text.encode('utf-8')).hexdigest() == APPROVED_GRAAL_TEMPLATE_SHA256,
+         'UNAPPROVED_GRAAL_TEMPLATE_REFUSED')
     need(text.count('__MAGALU_THRESHOLD__') == 1 and text.count('__MAGALU_AURORA__') == 1,
          'TEMPLATE_DRIFT')
     text = text.replace('__MAGALU_THRESHOLD__', str(cfg['loginAttempts']['stepUpAfterFailures']))
