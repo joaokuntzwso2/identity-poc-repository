@@ -3315,3 +3315,102 @@ a {
 .v5-strip-login{min-height:36px;padding:9px 12px}
 @media(max-width:1150px){.v5-lab-signin-links{grid-template-columns:repeat(2,minmax(0,1fr))}.rt-header-inner{flex-wrap:wrap;height:auto;min-height:82px;padding-top:12px;padding-bottom:12px;gap:12px}}
 @media(max-width:640px){.v5-lab-signin-links{grid-template-columns:1fr}.v5-lab-signin{padding:16px}.v5-header-login{width:100%;max-width:none}}
+
+
+/* P2_RETAIL_RESPONSIVE_V49: first-party mobile-like external area for WEB channels.
+ * No iframe, spoofed identity, auth changes or scroll-locking on mobile screens. */
+.v5-retail-stage {
+  --frame-accent:#208b93;
+  min-height:100dvh;
+  background:radial-gradient(ellipse at top,#f4f8fa 0,#e6edf2 64%,#e1e8ef 100%);
+  padding:28px 20px 34px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:14px;
+  overflow-x:clip;
+}
+.v5-retail-stage--brisa { --frame-accent:#a76c4c; background:radial-gradient(ellipse at top,#f8f4ee 0,#ece6df 66%,#e6ded5 100%); }
+.v5-retail-stage-context { width:min(100%,600px); display:grid; justify-items:center; gap:5px; text-align:center; color:#30465a; }
+.v5-retail-stage-context>a { justify-self:start; color:#276776; font-size:12px; font-weight:750; text-decoration:none; padding:7px 0; }
+.v5-retail-stage-context>span { letter-spacing:.16em; font-size:10px; font-weight:750; color:#647888; }
+.v5-retail-stage-context h1 { font-size:clamp(20px,2.5vw,26px); margin:2px 0 0; }
+.v5-retail-stage-context p { font-size:12px; margin:0 0 4px; max-width:420px; color:#5a6c79; }
+.v5-retail-device { width:min(100%,440px); border:7px solid #202931; padding:0; background:#202931; border-radius:35px;
+  box-shadow:0 24px 65px #192b3b38,0 2px 7px #1119; overflow:hidden; min-width:0; }
+.v5-retail-device-top { background:#202931; height:20px; display:grid; place-items:center; }
+.v5-retail-device-top>span { display:block; width:66px; height:6px; border-radius:10px; background:#0e151a; }
+.v5-retail-device-bottom { height:17px; display:grid; place-items:center; background:#202931; }
+.v5-retail-device-bottom>span { width:100px; height:4px; background:#7b858c; border-radius:10px; }
+.v5-retail-screen { width:100%; min-width:0; height:min(780px,calc(100dvh - 165px)); min-height:430px; overflow-x:hidden; overflow-y:auto;
+  overscroll-behavior:contain; background:#fff; scrollbar-width:thin; scroll-behavior:smooth; }
+.v5-retail-stage .retail-site { min-height:100%; width:100%; min-width:0; max-width:100%; font-size:14px; overflow-wrap:anywhere; }
+.v5-retail-stage .retail-site * { min-width:0; }
+.v5-retail-stage .rt-demo-banner { padding:8px 10px; display:flex; gap:5px 10px; flex-wrap:wrap; font-size:10px; line-height:1.4; }
+.v5-retail-stage .rt-demo-banner strong { white-space:normal; }
+.v5-retail-stage .rt-demo-banner a { margin-left:0; }
+.v5-retail-stage .rt-service-strip { display:none; }
+.v5-retail-stage .rt-header { position:sticky; top:0; }
+.v5-retail-stage .rt-header-inner { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:7px 10px;
+  padding:11px 13px 8px; height:auto; max-width:100%; }
+.v5-retail-stage .rt-wordmark { grid-row:1; grid-column:1; font-size:clamp(22px,5vw,29px); letter-spacing:-.065em; }
+.v5-retail-stage .retail-brisa .rt-wordmark { font-size:clamp(26px,6vw,33px); }
+.v5-retail-stage .rt-wordmark small { display:none; }
+.v5-retail-stage .v5-header-login { grid-row:1; grid-column:2; justify-self:end; min-width:0; width:auto; max-width:145px; padding:10px 11px; font-size:11px; }
+.v5-retail-stage .rt-primary-nav { grid-row:2; grid-column:1 / -1; display:flex; flex-direction:row; align-items:center; flex-wrap:nowrap; gap:14px; min-width:0; width:100%;
+  overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; padding:4px 0 8px; position:static; box-shadow:none; background:transparent; }
+.v5-retail-stage .rt-primary-nav a { display:inline-flex; flex:0 0 auto; font-size:11px; font-weight:650; text-decoration:none; white-space:nowrap; padding:6px 0; }
+.v5-retail-stage .v5-identity-strip { display:flex; flex-wrap:wrap; justify-content:flex-start; gap:8px; padding:12px 14px; }
+.v5-retail-stage .v5-identity-strip > span { max-width:100%; overflow-wrap:anywhere; flex-basis:100%; }
+.v5-retail-stage .v5-strip-login { max-width:100%; }
+.v5-retail-stage .v5-identity-strip button { padding:9px 12px; min-height:37px; font-size:11px; }
+.v5-retail-stage .rt-hero { display:grid; grid-template-columns:minmax(0,1fr); min-height:0; padding:0; }
+.v5-retail-stage .rt-hero-copy { width:100%; min-width:0; max-width:100%; padding:36px 20px 38px; justify-self:stretch; }
+.v5-retail-stage .rt-hero-copy h1 { font-size:clamp(32px,8vw,43px); line-height:1.12; margin:20px 0 12px; }
+.v5-retail-stage .rt-hero-copy p { font-size:13px; line-height:1.6; margin-bottom:12px; }
+.v5-retail-stage .v5-product-hero { display:none; }
+.v5-retail-stage .v5-hero-cta { display:flex; flex-wrap:wrap; align-items:stretch; gap:9px; width:100%; }
+.v5-retail-stage .v5-hero-cta>* { flex:1 1 130px; min-width:0; width:auto; white-space:normal; text-align:center; }
+.v5-retail-stage .rt-btn { min-height:42px; padding:11px 13px; }
+.v5-retail-stage .rt-container { padding-left:15px; padding-right:15px; width:100%; max-width:100%; }
+.v5-retail-stage .rt-section { padding-top:37px; padding-bottom:39px; }
+.v5-retail-stage .rt-section-head { display:flex; flex-direction:column; align-items:flex-start; gap:8px; margin-bottom:16px; }
+.v5-retail-stage .rt-section-head h2 { font-size:24px; line-height:1.22; }
+.v5-retail-stage .rt-section-head .badge { max-width:100%; white-space:normal; }
+.v5-retail-stage .v5-products { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin:13px 0; }
+.v5-retail-stage .v5-product { min-width:0; padding-bottom:12px; }
+.v5-retail-stage .v5-product .v5-product-art { height:116px; margin-bottom:9px; font-size:50px; }
+.v5-retail-stage .v5-product>small,.v5-retail-stage .v5-product>h3,.v5-retail-stage .v5-product>strong { margin:5px 10px; }
+.v5-retail-stage .v5-product h3 { font-size:14px; line-height:1.25; overflow-wrap:anywhere; }
+.v5-retail-stage .v5-account-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; }
+.v5-retail-stage .v5-panel { padding:15px; margin:9px 0; min-width:0; }
+.v5-retail-stage .v5-panel h3 { font-size:17px; }
+.v5-retail-stage .v5-account dl { grid-template-columns:1fr; gap:4px; margin:12px 0; }
+.v5-retail-stage .v5-case-form { grid-template-columns:minmax(0,1fr); gap:8px; }
+.v5-retail-stage .v5-case-form input,.v5-retail-stage .v5-case-form textarea,
+.v5-retail-stage .v5-case-controls select { max-width:100%; width:100%; min-width:0; }
+.v5-retail-stage .v5-case-approve { flex-direction:column; align-items:stretch; }
+.v5-retail-stage .v5-case-controls { display:flex; flex-wrap:wrap; align-items:stretch; gap:7px; }
+.v5-retail-stage .v5-case-controls>* { max-width:100%; }
+.v5-retail-stage .v5-business-record { min-width:0; overflow-wrap:anywhere; }
+.v5-retail-stage .v5-footer { padding:24px 13px; line-height:1.5; overflow-wrap:anywhere; }
+.v5-retail-stage-note { font-size:11px; text-align:center; color:#637482; max-width:420px; margin:0; }
+.v5-retail-stage a:focus-visible,.v5-retail-stage button:focus-visible,
+.v5-retail-stage input:focus-visible,.v5-retail-stage textarea:focus-visible,
+.v5-retail-stage select:focus-visible { outline:3px solid var(--frame-accent); outline-offset:2px; }
+@media(max-width:700px) {
+  .v5-retail-stage { display:block; padding:0; min-height:100dvh; background:#fff; overflow:visible; }
+  .v5-retail-stage-context,.v5-retail-stage-note,.v5-retail-device-top,.v5-retail-device-bottom { display:none; }
+  .v5-retail-device { width:100%; border:0; border-radius:0; box-shadow:none; background:#fff; overflow:visible; }
+  .v5-retail-screen { height:auto; min-height:100dvh; overflow:visible; }
+  .v5-retail-stage .retail-site { min-height:100dvh; }
+}
+@media(max-width:360px) {
+  .v5-retail-stage .rt-header-inner { padding:9px 10px; gap:7px; }
+  .v5-retail-stage .rt-wordmark { font-size:23px; }
+  .v5-retail-stage .retail-brisa .rt-wordmark { font-size:27px; }
+  .v5-retail-stage .v5-header-login { padding:8px; font-size:10px; max-width:124px; }
+  .v5-retail-stage .rt-hero-copy { padding:28px 14px; }
+  .v5-retail-stage .v5-product .v5-product-art { height:95px; }
+}
+@media(prefers-reduced-motion:reduce) { .v5-retail-screen { scroll-behavior:auto; } }

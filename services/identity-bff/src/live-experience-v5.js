@@ -162,7 +162,17 @@
   function sitePage(){
     const x=site, c=me?.clients?.[x.key], signed=c?.authenticated===true;
     const name=x.brand==='aurora'?'AURORA':'brisa.', mobile=x.channel==='mobile';
-    root.innerHTML=`<div class="retail-site retail-${x.brand} ${mobile?'v5-mobile-site':''}"><a class="v5-skip-link" href="#branded-main">Pular para o conteúdo</a>
+    // A web channel is a regular first-party page. The decorative phone frame
+    // contains the SAME live BFF storefront DOM (no iframe or separate session).
+    // On narrow viewports CSS removes the decoration and the content goes edge-to-edge.
+    const frameOpen = mobile ? '' : `<div class="v5-retail-stage v5-retail-stage--${x.brand}" data-testid="live-retail-stage">
+      <div class="v5-retail-stage-context"><a href="/lab">← Experience Center</a><span>WSO2 IS 7.3 · CANAL WEB</span>
+      <h1>${x.brand==='aurora'?'Aurora':'Brisa'} Web</h1><p>Loja real conectada ao BFF. A autenticação continua no WSO2.</p></div>
+      <div class="v5-retail-device" data-testid="live-retail-device"><div class="v5-retail-device-top" aria-hidden="true"><span></span></div>
+      <div class="v5-retail-screen" data-testid="live-retail-screen">`;
+    const frameClose = mobile ? '' : `</div><div class="v5-retail-device-bottom" aria-hidden="true"><span></span></div></div>
+      <p class="v5-retail-stage-note">Prévia responsiva do canal web · Aurora e Brisa mantêm sessões e tenants separados.</p></div>`;
+    root.innerHTML=`${frameOpen}<div class="retail-site retail-${x.brand} ${mobile?'v5-mobile-site':''}"><a class="v5-skip-link" href="#branded-main">Pular para o conteúdo</a>
       <div class="rt-demo-banner"><strong>DEMONSTRAÇÃO COM IDENTIDADE REAL</strong><span>Catálogo ilustrativo · Sem pedidos ou pagamentos fictícios</span><a href="/lab">Voltar ao Experience Center →</a></div>
       <div class="rt-service-strip"><span>WSO2 Identity Server 7.3 · ${x.brand.toUpperCase()} TENANT</span><span>${mobile?'Navegador mobile · Cliente OIDC próprio':'Navegador web · Cliente OIDC próprio'}</span></div>
       <header class="rt-header"><div class="rt-header-inner"><a class="rt-wordmark" href="${x.path}">${name}<small>${mobile?'NAVEGADOR MOBILE':'WEB'}</small></a>
@@ -191,7 +201,7 @@
       <div id="v5-case-list" class="v5-business-records"></div></div></section>
       <section class="rt-container rt-section v5-panel"><h3>Privacidade, MFA e parceiros</h3><p>Preferências e delegação organizacional não são simuladas. Aprovações exigem TOTP recente real no ID token, além do escopo de aprovação.</p>
       <a href="/lab#privacy">Abrir roteiro de privacidade</a> · <a href="/lab#security">Segurança e assurance</a></section>
-      </main><footer class="v5-footer">${x.label} · Tenant ${x.brand}.identity.test · Verificação WSO2 por solicitação protegida</footer></div>`;
+      </main><footer class="v5-footer">${x.label} · Tenant ${x.brand}.identity.test · Verificação WSO2 por solicitação protegida</footer></div>${frameClose}`;
     if (signed){
       el('site-identity').textContent=c?.claimsFromVerifiedIdToken?.name || c?.claimsFromVerifiedIdToken?.preferred_username || 'Identidade verificada no WSO2';
       el('site-issuer').textContent=`Issuer: ${c.issuer} · fingerprint: ${c.subjectFingerprint}`;

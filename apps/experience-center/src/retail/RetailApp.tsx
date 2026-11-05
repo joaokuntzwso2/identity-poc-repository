@@ -1,8 +1,8 @@
 import React from 'react';
-import { LiveBffEntry } from '../retired/LiveBffEntry';
+import { ResponsiveRetailEntry } from './ResponsiveRetailEntry';
 
-// Standalone Vite preview intentionally does not create or select identities.
-// The live retail UI and persistence remain implemented in the existing BFF.
+// These Vite entry points are responsive access previews, not authenticated portals.
+// All live authentication and business interactions remain on the WSO2-backed BFF.
 export function RetailApp({ brand }: { brand: 'aurora' | 'brisa' }) {
-  return <LiveBffEntry brand={brand} surface="web" />;
+  return <ResponsiveRetailEntry brand={brand} />;
 }
